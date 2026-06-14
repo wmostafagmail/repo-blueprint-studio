@@ -4,6 +4,8 @@ import { api, ModelLimit, Setting } from '../api';
 
 const isLocalProvider = (provider: string): boolean => provider === 'ollama' || provider === 'lmstudio';
 
+const normalizeModelKey = (modelName: string): string => modelName.trim().toLowerCase();
+
 const getModelLimits = (modelName: string): ModelLimit => {
   const model = modelName.toLowerCase();
   
@@ -37,6 +39,24 @@ const getModelLimits = (modelName: string): ModelLimit => {
   }
 
   return { maxOutputTokens: 4000, chunkSize: 10000, max_output_tokens: 4000, chunk_size: 10000, source: 'fallback', notes: 'Generic fallback profile.' };
+};
+
+const resolveModelLimits = (modelName: string, knownLimits: Record<string, ModelLimit>): ModelLimit => {
+  if (!modelName) {
+    return getModelLimits(modelName);
+  }
+
+  if (knownLimits[modelName]) {
+    return knownLimits[modelName];
+  }
+
+  const normalizedName = normalizeModelKey(modelName);
+  const matchedEntry = Object.entries(knownLimits).find(([name]) => normalizeModelKey(name) === normalizedName);
+  if (matchedEntry) {
+    return matchedEntry[1];
+  }
+
+  return getModelLimits(modelName);
 };
 
 export const SettingsForm: React.FC = () => {
@@ -130,6 +150,44 @@ export const SettingsForm: React.FC = () => {
       });
   }, []);
 
+  useEffect(() => {
+    if (!settings.model || !isLocalProvider(settings.provider) || models.length === 0) {
+      return;
+    }
+
+    const selectedFromList = models.some((modelName) => normalizeModelKey(modelName) === normalizeModelKey(settings.model || ''));
+    if (!selectedFromList) {
+      return;
+    }
+
+    const limits = resolveModelLimits(settings.model, modelsLimits);
+    if (limits.source !== 'detected') {
+      return;
+    }
+
+    if (
+      settings.max_output_tokens === limits.maxOutputTokens &&
+      settings.chunk_size === limits.chunkSize
+    ) {
+      return;
+    }
+
+    setSettings((current) => {
+      if (
+        current.model !== settings.model ||
+        current.provider !== settings.provider
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        max_output_tokens: limits.maxOutputTokens,
+        chunk_size: limits.chunkSize,
+      };
+    });
+  }, [settings.model, settings.provider, settings.max_output_tokens, settings.chunk_size, models, modelsLimits]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     let finalValue: any = value;
@@ -168,7 +226,7 @@ export const SettingsForm: React.FC = () => {
 
     // Auto-adjust token limits and context chunk size when the model is selected
     if (name === 'model') {
-      const limits = modelsLimits[value] || getModelLimits(value);
+      const limits = resolveModelLimits(value, modelsLimits);
       updatedSettings.max_output_tokens = limits.maxOutputTokens;
       updatedSettings.chunk_size = limits.chunkSize;
     }
