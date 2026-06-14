@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from backend.app.config import DATABASE_URL
+from app.config import DATABASE_URL
 
 # Create SQLAlchemy engine
 engine = create_engine(
@@ -21,7 +21,7 @@ def get_db():
 
 def init_db():
     # Lazy import of models to register them on Base
-    import backend.app.models
+    import app.models
     Base.metadata.create_all(bind=engine)
     
     # Migrate existing settings table if api_keys_json column is missing
@@ -34,9 +34,15 @@ def init_db():
         pass
         
     try:
-        db_mig.execute(text("ALTER TABLE settings ADD COLUMN analysis_strategy VARCHAR(50) DEFAULT 'direct'"))
+        db_mig.execute(text("ALTER TABLE settings ADD COLUMN analysis_strategy VARCHAR(50) DEFAULT 'hierarchical'"))
         db_mig.execute(text("ALTER TABLE settings ADD COLUMN map_batch_size INTEGER DEFAULT 5"))
         db_mig.execute(text("ALTER TABLE settings ADD COLUMN generate_chunk_size INTEGER DEFAULT 5"))
+        db_mig.commit()
+    except Exception:
+        pass
+
+    try:
+        db_mig.execute(text("UPDATE settings SET analysis_strategy = 'hierarchical' WHERE analysis_strategy IS NULL"))
         db_mig.commit()
     except Exception:
         pass
@@ -53,7 +59,7 @@ def init_db():
     # Initialize default settings record if empty
     db = SessionLocal()
     try:
-        from backend.app.models import Setting
+        from app.models import Setting
         existing = db.query(Setting).first()
         if not existing:
             default_setting = Setting(

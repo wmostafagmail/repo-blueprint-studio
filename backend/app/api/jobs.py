@@ -5,12 +5,12 @@ from sqlalchemy.orm import Session
 from pathlib import Path
 from typing import List
 
-from backend.app.database import get_db
-from backend.app.models import Job, JobLog, Setting
-from backend.app.schemas import JobCreate, JobResponse, JobLogResponse
-from backend.app.utils.url_validation import is_safe_github_url
-from backend.app.utils.repo_name import repo_name_from_url
-from backend.app.services.analysis_service import AnalysisService
+from app.database import get_db
+from app.models import Job, JobLog, Setting
+from app.schemas import JobCreate, JobResponse, JobLogResponse
+from app.utils.url_validation import is_safe_github_url
+from app.utils.repo_name import repo_name_from_url
+from app.services.analysis_service import AnalysisService
 
 router = APIRouter()
 
@@ -22,7 +22,7 @@ def run_analysis_task(
     model_override: str = None
 ):
     """Background task executed by FastAPI to run the analysis."""
-    from backend.app.database import SessionLocal
+    from app.database import SessionLocal
     db = SessionLocal()
     try:
         service = AnalysisService(db, job_id)
@@ -138,7 +138,7 @@ def download_blueprint(job_id: str, db: Session = Depends(get_db)):
         
     # Security requirement: check that downloading path is indeed inside outputs folder
     output_file_path = Path(job.output_path).resolve()
-    from backend.app.config import OUTPUTS_DIR
+    from app.config import OUTPUTS_DIR
     resolved_outputs = OUTPUTS_DIR.resolve()
     
     if resolved_outputs not in output_file_path.parents:
@@ -164,7 +164,7 @@ def preview_blueprint(job_id: str, db: Session = Depends(get_db)):
         
     # Verify folder hierarchy
     output_file_path = Path(job.output_path).resolve()
-    from backend.app.config import OUTPUTS_DIR
+    from app.config import OUTPUTS_DIR
     resolved_outputs = OUTPUTS_DIR.resolve()
     
     if resolved_outputs not in output_file_path.parents:
@@ -185,7 +185,7 @@ def get_job_inventory(job_id: str, db: Session = Depends(get_db)):
     if job.status != "completed":
         raise HTTPException(status_code=400, detail="Job is not completed yet")
         
-    from backend.app.config import OUTPUTS_DIR, JOBS_DIR
+    from app.config import OUTPUTS_DIR, JOBS_DIR
     import json
     
     # Primary path: copied to outputs dir during job completion

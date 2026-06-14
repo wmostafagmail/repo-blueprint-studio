@@ -1,11 +1,11 @@
-from backend.app.services.providers.base import BaseLLMProvider
-from backend.app.services.providers.openai_provider import OpenAIProvider
-from backend.app.services.providers.gemini_provider import GeminiProvider
-from backend.app.services.providers.ollama_provider import OllamaProvider
-from backend.app.services.providers.lmstudio_provider import LMStudioProvider
-from backend.app.services.providers.openai_compatible_provider import OpenAICompatibleProvider
-from backend.app.services.providers.openrouter_provider import OpenRouterProvider
-from backend.app.services.providers.mock_provider import MockProvider
+from app.services.providers.base import BaseLLMProvider
+from app.services.providers.openai_provider import OpenAIProvider
+from app.services.providers.gemini_provider import GeminiProvider
+from app.services.providers.ollama_provider import OllamaProvider
+from app.services.providers.lmstudio_provider import LMStudioProvider
+from app.services.providers.openai_compatible_provider import OpenAICompatibleProvider
+from app.services.providers.openrouter_provider import OpenRouterProvider
+from app.services.providers.mock_provider import MockProvider
 
 def get_provider(provider_name: str, api_key: str = "", base_url: str = "", model: str = "") -> BaseLLMProvider:
     """

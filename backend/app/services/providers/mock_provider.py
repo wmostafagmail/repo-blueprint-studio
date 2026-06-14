@@ -1,7 +1,8 @@
 from typing import List
 import re
+import json
 from datetime import datetime, timezone
-from backend.app.services.providers.base import BaseLLMProvider
+from app.services.providers.base import BaseLLMProvider
 
 class MockProvider(BaseLLMProvider):
     def __init__(self, api_key: str = "", base_url: str = "", model: str = ""):
@@ -25,6 +26,50 @@ class MockProvider(BaseLLMProvider):
         repo_url = repo_url_match.group(0) if repo_url_match else f"https://github.com/mock-org/{repo_name}"
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        if "Return only valid JSON" in system_prompt:
+            return json.dumps({
+                "product_summary": f"{repo_name} is a repository analysis product focused on generating rebuild blueprints.",
+                "actors": [{"name": "Operator", "purpose": "Runs repository analysis jobs", "evidence": ["README.md", "backend/app/api/jobs.py"], "confidence": "high"}],
+                "features": [{"name": "Repository analysis", "summary": "Accepts a repository and generates a clean-room blueprint.", "evidence": ["backend/app/services/analysis_service.py"], "confidence": "high"}],
+                "entities": [{"name": "Job", "summary": "Tracks analysis execution state and outputs.", "evidence": ["backend/app/models.py"], "confidence": "high"}],
+                "api_contracts": [{"name": "Jobs API", "summary": "Creates, monitors, and cancels analysis jobs.", "evidence": ["backend/app/api/jobs.py"], "confidence": "high"}],
+                "ui_surfaces": [{"name": "History page", "summary": "Shows prior jobs and execution progress.", "evidence": ["frontend/src/pages/Jobs.tsx"], "confidence": "high"}],
+                "security_findings": [{"name": "Secret redaction", "summary": "Sensitive strings are redacted before LLM analysis.", "evidence": ["backend/app/services/redaction_service.py"], "confidence": "high"}],
+                "operations_findings": [{"name": "Local outputs", "summary": "Blueprints are written to docs and copied to outputs.", "evidence": ["backend/app/services/analysis_service.py"], "confidence": "high"}],
+                "assumptions": ["Repository uses staged analysis as the primary rebuild workflow."],
+                "gaps": ["No live runtime behavior was observed beyond static evidence."]
+            })
+
+        if '"responsibilities"' in system_prompt and '"exports"' in system_prompt:
+            return json.dumps({
+                "responsibilities": ["Summarize the file's architectural role", "Expose implementation-relevant behaviors"],
+                "exports": ["mock_export"],
+                "dependencies": ["mock_dependency"],
+                "evidence": [f"Evidence derived from {repo_name} repository context"]
+            })
+
+        if "Update the consolidated rolling state" in prompt:
+            return "- Architecture uses a staged analysis pipeline.\n- Evidence is grounded in manifests, APIs, and UI files.\n- Remaining gaps should be labeled explicitly in later sections."
+
+        if "Rewrite the same section range" in prompt:
+            # Fall through and regenerate based on headings present in the prompt.
+            pass
+
+        if "Write these sections in markdown:" in prompt:
+            sections = []
+            for line in prompt.splitlines():
+                if line.startswith("## "):
+                    heading = line.strip()
+                    sections.append(
+                        f"{heading}\n\n"
+                        f"Evidence: `{repo_name}` repository evidence indicates this section is relevant.\n\n"
+                        "Inference: A downstream implementation should preserve the observed behavior and structure.\n\n"
+                        "Assumption: Where direct evidence is incomplete, use a safe rebuild choice and document it.\n\n"
+                        "Gap: Additional runtime-only behavior may exist beyond static analysis.\n\n"
+                        "Confidence: Medium.\n"
+                    )
+            return "\n\n".join(sections)
         
         template = """# {repo_name} Rebuild Blueprint
 

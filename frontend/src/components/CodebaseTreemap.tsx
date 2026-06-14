@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
-import { Search, FolderOpen, ArrowLeft, Info, HardDrive, FileText, Code2, Hash } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Search, FolderOpen, ArrowLeft, Info, HardDrive, FileText, Code2 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -207,17 +207,6 @@ function squarify(items: { node: TreeNode; dominantExt: string }[], x: number, y
 }
 
 // ── Legend ────────────────────────────────────────────────────────────────────
-
-const LegendDot: React.FC<{ ext: string; count?: number }> = ({ ext, count }) => {
-  const p = EXT_PALETTE[ext] || UNKNOWN_PALETTE;
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: p.fill, border: `1px solid ${p.stroke}` }} />
-      <span className="text-[10px] text-slate-300 font-medium">{p.name}</span>
-      {count !== undefined && <span className="text-[10px] text-slate-500 ml-auto">{count}</span>}
-    </div>
-  );
-};
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 

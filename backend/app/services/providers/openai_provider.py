@@ -1,6 +1,6 @@
 from typing import List
 import httpx
-from backend.app.services.providers.base import BaseLLMProvider
+from app.services.providers.base import BaseLLMProvider
 
 class OpenAIProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str = "", model: str = ""):
@@ -26,7 +26,8 @@ class OpenAIProvider(BaseLLMProvider):
             resp = httpx.get(url, headers=headers, timeout=10.0)
             if resp.status_code == 200:
                 data = resp.json()
-                return [m["id"] for m in data.get("data", [])]
+                self._models_cache = data.get("data", [])
+                return [m["id"] for m in self._models_cache]
         except Exception:
             pass
         return ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]

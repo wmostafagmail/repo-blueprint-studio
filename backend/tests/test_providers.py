@@ -2,6 +2,7 @@ from backend.app.services.providers import get_provider
 from backend.app.services.providers.openai_provider import OpenAIProvider
 from backend.app.services.providers.openrouter_provider import OpenRouterProvider
 from backend.app.services.providers.gemini_provider import GeminiProvider
+from backend.app.services.providers.lmstudio_provider import LMStudioProvider
 from backend.app.services.providers.mock_provider import MockProvider
 
 def test_provider_factory_mapping():
@@ -21,6 +22,9 @@ def test_provider_factory_mapping():
     # Verify gemini mapping
     provider = get_provider("gemini", api_key="test-key")
     assert isinstance(provider, GeminiProvider)
+
+    provider = get_provider("lmstudio", base_url="http://localhost:1234/v1")
+    assert isinstance(provider, LMStudioProvider)
 
 def test_openrouter_headers():
     provider = get_provider("openrouter", api_key="test-key-or")
@@ -46,7 +50,8 @@ def test_provider_limits_resolution():
     # Verify Llama 3 limits
     limits_llama = provider.get_model_limits("meta-llama/llama-3-8b-instruct")
     assert limits_llama["max_output_tokens"] == 4096
-    assert limits_llama["chunk_size"] == 15000
+    assert limits_llama["chunk_size"] == 20000
+    assert limits_llama["source"] == "fallback"
 
     # Verify fallback for unknown model
     limits_fallback = provider.get_model_limits("some-random-unknown-model")
@@ -87,6 +92,8 @@ def test_ollama_provider_limits():
         
         limits = provider.get_model_limits("gemma4:latest")
         assert limits["chunk_size"] == 524288
+        assert limits["max_output_tokens"] == 16384
+        assert limits["source"] == "detected"
         mock_post.assert_called_once_with(
             "http://localhost:11434/api/show",
             json={"name": "gemma4:latest"},
@@ -97,5 +104,32 @@ def test_ollama_provider_limits():
     with patch("httpx.post") as mock_post:
         mock_post.side_effect = Exception("Connection refused")
         limits = provider.get_model_limits("gemma4:latest")
-        assert limits["chunk_size"] == 15000
+        assert limits["chunk_size"] == 40000
+        assert limits["source"] == "fallback"
 
+def test_lmstudio_provider_limits_from_model_metadata():
+    from unittest.mock import patch
+    import httpx
+
+    provider = get_provider("lmstudio", base_url="http://localhost:1234/v1")
+    provider._models_cache = [
+        {
+            "id": "qwen2.5-coder-32b-instruct",
+            "max_context_length": 65536,
+            "max_output_tokens": 8192,
+        }
+    ]
+
+    with patch("httpx.get") as mock_get:
+        limits = provider.get_model_limits("qwen2.5-coder-32b-instruct")
+        assert limits["chunk_size"] == 262144
+        assert limits["max_output_tokens"] == 8192
+        assert limits["source"] == "detected"
+        mock_get.assert_not_called()
+
+def test_lmstudio_provider_limits_fallback():
+    provider = get_provider("lmstudio", base_url="http://localhost:1234/v1")
+    limits = provider.get_model_limits("local-unknown-model")
+    assert limits["chunk_size"] == 40000
+    assert limits["max_output_tokens"] == 6144
+    assert limits["source"] == "fallback"

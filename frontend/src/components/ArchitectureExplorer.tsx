@@ -171,7 +171,6 @@ interface NodeCardProps {
 }
 
 const NodeCard: React.FC<NodeCardProps> = ({ node, onClick, isFile }) => {
-  const hasChildren = Object.keys(node.children).length > 0 || node.files.length > 0;
   const canDrillDown = node.isDir && (Object.keys(node.children).length > 0 || node.files.length > 0);
 
   return (

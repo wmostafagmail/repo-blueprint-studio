@@ -1,4 +1,4 @@
-from backend.app.services.providers.openai_provider import OpenAIProvider
+from app.services.providers.openai_provider import OpenAIProvider
 
 class OpenAICompatibleProvider(OpenAIProvider):
     """

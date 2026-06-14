@@ -1,120 +1,126 @@
+import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Callable
+from typing import Callable, Dict, List
+
+from app.services.prompt_builders import (
+    ANALYSIS_STATE_SYSTEM_PROMPT,
+    MASTER_SYSTEM_PROMPT,
+    ROLLING_STATE_SYSTEM_PROMPT,
+    SECTION_CHUNKS,
+    build_analysis_state_prompt,
+    build_repair_prompt,
+    build_rolling_state_prompt,
+    build_section_prompt,
+    validate_section_output,
+)
 
 logger = logging.getLogger(__name__)
 
-# Define the section chunks
-SECTION_CHUNKS = [
-    {
-        "id": 1,
-        "range_str": "Sections 1 to 5",
-        "description": "1. Executive Summary, 2. Product Purpose and Scope, 3. Repository Evidence Summary, 4. Technology Stack, 5. Architecture Overview.",
-        "prompt": (
-            "Write Sections 1 to 5 of the rebuild blueprint specification:\n"
-            "Section 1. Executive Summary: High level summary of what this repository does.\n"
-            "Section 2. Product Purpose and Scope: Target problems and target users.\n"
-            "Section 3. Repository Evidence Summary: List structural files and manifestations found.\n"
-            "Section 4. Technology Stack: Primary languages, database choice, and frameworks.\n"
-            "Section 5. Architecture Overview: Component layout and design patterns. "
-            "You MUST include a valid Mermaid flowchart diagram (using ```mermaid ... ``` fences) "
-            "that shows the high-level component architecture with data flow arrows. "
-            "Example format: ```mermaid\nflowchart TD\n    A[Component A] -->|action| B[Component B]\n```"
-        )
-    },
-    {
-        "id": 2,
-        "range_str": "Sections 6 to 10",
-        "description": "6. Low-Level Design, 7. Functional Requirements, 8. User Roles and Permissions, 9. User Journeys and Workflows, 10. UI/UX Specification.",
-        "prompt": (
-            "Write Sections 6 to 10 of the rebuild blueprint specification:\n"
-            "Section 6. Low-Level Design: Key classes, modules, and interfaces.\n"
-            "Section 7. Functional Requirements: Core functionalities implemented.\n"
-            "Section 8. User Roles and Permissions: Defined access levels.\n"
-            "Section 9. User Journeys and Workflows: Critical workflow steps.\n"
-            "Section 10. UI/UX Specification: Visual components, page layouts, or CLI interfaces."
-        )
-    },
-    {
-        "id": 3,
-        "range_str": "Sections 11 to 15",
-        "description": "11. API Specification, 12. Data Model and Database Design, 13. Business Rules and Validation Logic, 14. Integrations and External Services, 15. Security Specification.",
-        "prompt": (
-            "Write Sections 11 to 15 of the rebuild blueprint specification:\n"
-            "Section 11. API Specification: REST routes, WebSockets, or CLI inputs/outputs.\n"
-            "Section 12. Data Model and Database Design: Table schemas, collections, or state layouts. "
-            "You MUST include a valid Mermaid erDiagram (using ```mermaid ... ``` fences) "
-            "showing the key entities and their relationships. "
-            "Example format: ```mermaid\nerDiagram\n    ENTITY_A ||--o{ ENTITY_B : has\n    ENTITY_A { int id PK }\n```\n"
-            "Section 13. Business Rules and Validation Logic: Strict validation rules and domain logic constraints.\n"
-            "Section 14. Integrations and External Services: Third-party SDKs, emails, or payment gateways.\n"
-            "Section 15. Security Specification: Auth mechanisms, JWT, encryption, or CORS policies."
-        )
-    },
-    {
-        "id": 4,
-        "range_str": "Sections 16 to 20",
-        "description": "16. Performance and Scalability Specification, 17. Reliability and Error Handling, 18. Configuration and Environment Variables, 19. File Storage and Generated Assets, 20. Testing Strategy.",
-        "prompt": (
-            "Write Sections 16 to 20 of the rebuild blueprint specification:\n"
-            "Section 16. Performance and Scalability Specification: Caching, database indexing, or optimization rules.\n"
-            "Section 17. Reliability and Error Handling: Error codes, retries, and failure boundaries.\n"
-            "Section 18. Configuration and Environment Variables: Settings keys, default values, and structure.\n"
-            "Section 19. File Storage and Generated Assets: Upload paths, storage buckets, or local asset folders.\n"
-            "Section 20. Testing Strategy: Unit tests, integration tests, or mock databases used."
-        )
-    },
-    {
-        "id": 5,
-        "range_str": "Sections 21 to 25",
-        "description": "21. Deployment and Operations, 22. Rebuild Implementation Plan, 23. Acceptance Criteria, 24. Risks, Gaps, Unknowns, and Assumptions, 25. Clean-Room Notes.",
-        "prompt": (
-            "Write Sections 21 to 25 of the rebuild blueprint specification:\n"
-            "Section 21. Deployment and Operations: Dockerfiles, CI workflows, or hosting targets.\n"
-            "Section 22. Rebuild Implementation Plan: Step-by-step phases to rebuild this codebase from scratch.\n"
-            "Section 23. Acceptance Criteria: Checklist for a successful rebuild verification.\n"
-            "Section 24. Risks, Gaps, Unknowns, and Assumptions: Ambiguities or missing evidence.\n"
-            "Section 25. Clean-Room Notes: Explicit rebuild instructions, warnings, or best practices."
-        )
-    }
-]
 
 class IncrementalSpecGenerator:
     def __init__(
-        self, 
-        provider, 
-        workspace_path: Path, 
-        log_fn: Callable[[str, str], None], 
-        progress_fn: Callable[[int, str], None]
+        self,
+        provider,
+        workspace_path: Path,
+        log_fn: Callable[[str, str], None],
+        progress_fn: Callable[[int, str], None],
     ):
         self.provider = provider
         self.workspace_path = workspace_path
         self.log = log_fn
         self.progress = progress_fn
 
-    def generate_rolling_state_summary(self, previous_output: str, current_state: str) -> str:
-        """
-        Synthesizes/condenses the design choices made in the newly generated sections
-        to update the rolling architectural state (ADR).
-        """
-        system_prompt = (
-            "You are an expert technical editor. Summarize the core architectural design and implementation choices "
-            "described in the text below into a 3-sentence summary. Focus on technology choice, database setup, "
-            "routes, and design patterns. Do not write conversational preamble."
+    def build_analysis_state(
+        self,
+        repo_url: str,
+        repo_name: str,
+        file_tree: List[str],
+        manifests_content: str,
+        component_specs: Dict[str, str],
+    ) -> Dict:
+        self.log("Building structured intermediate analysis state from repository evidence...", "INFO")
+        prompt = build_analysis_state_prompt(
+            repo_name=repo_name,
+            repo_url=repo_url,
+            file_tree=file_tree,
+            manifests_content=manifests_content,
+            component_specs=component_specs,
         )
-        
-        prompt = (
-            f"Current saved state so far:\n{current_state}\n\n"
-            f"New section details:\n{previous_output}\n\n"
-            f"Update the architectural design summary:"
-        )
-        
         try:
             resp = self.provider.generate(
                 prompt=prompt,
-                system_prompt=system_prompt,
+                system_prompt=ANALYSIS_STATE_SYSTEM_PROMPT,
                 temperature=0.1,
-                max_tokens=250
+                max_tokens=2500,
+            )
+            cleaned = resp.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1]
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0]
+            if cleaned.startswith("json"):
+                cleaned = cleaned.split("json", 1)[1]
+            parsed = json.loads(cleaned.strip())
+            self.log(
+                "Structured state extracted: "
+                f"{len(parsed.get('features', []))} features, "
+                f"{len(parsed.get('entities', []))} entities, "
+                f"{len(parsed.get('api_contracts', []))} API contracts, "
+                f"{len(parsed.get('ui_surfaces', []))} UI surfaces.",
+                "INFO",
+            )
+            return parsed
+        except Exception as e:
+            self.log(f"Failed to build structured analysis state: {str(e)}", "WARNING")
+            return {
+                "product_summary": "",
+                "actors": [],
+                "features": [],
+                "entities": [],
+                "api_contracts": [],
+                "ui_surfaces": [],
+                "security_findings": [],
+                "operations_findings": [],
+                "assumptions": [],
+                "gaps": [f"Structured state extraction failed: {str(e)}"],
+            }
+
+    def format_analysis_state_markdown(self, analysis_state: Dict) -> str:
+        def fmt_items(title: str, items: List[Dict]) -> str:
+            if not items:
+                return f"### {title}\n- None extracted.\n"
+            lines = [f"### {title}"]
+            for item in items[:20]:
+                evidence = ", ".join(item.get("evidence", [])[:4])
+                lines.append(
+                    f"- {item.get('name', 'Unnamed')}: {item.get('summary', '')} "
+                    f"(confidence: {item.get('confidence', 'medium')}; evidence: {evidence})"
+                )
+            return "\n".join(lines) + "\n"
+
+        sections = [
+            f"## Product Summary\n{analysis_state.get('product_summary', 'Not extracted.')}\n",
+            fmt_items("Actors", analysis_state.get("actors", [])),
+            fmt_items("Features", analysis_state.get("features", [])),
+            fmt_items("Entities", analysis_state.get("entities", [])),
+            fmt_items("API Contracts", analysis_state.get("api_contracts", [])),
+            fmt_items("UI Surfaces", analysis_state.get("ui_surfaces", [])),
+            fmt_items("Security Findings", analysis_state.get("security_findings", [])),
+            fmt_items("Operations Findings", analysis_state.get("operations_findings", [])),
+            "## Assumptions\n" + "\n".join(f"- {item}" for item in analysis_state.get("assumptions", [])[:12]) + "\n",
+            "## Gaps\n" + "\n".join(f"- {item}" for item in analysis_state.get("gaps", [])[:12]) + "\n",
+        ]
+        return "\n".join(sections)
+
+    def generate_rolling_state_summary(self, previous_output: str, current_state: str) -> str:
+        prompt = build_rolling_state_prompt(previous_output, current_state)
+        try:
+            resp = self.provider.generate(
+                prompt=prompt,
+                system_prompt=ROLLING_STATE_SYSTEM_PROMPT,
+                temperature=0.1,
+                max_tokens=450,
             )
             return resp.strip()
         except Exception as e:
@@ -122,83 +128,86 @@ class IncrementalSpecGenerator:
             return current_state
 
     def generate_blueprint(
-        self, 
-        repo_url: str, 
-        repo_name: str, 
-        file_tree: List[str], 
-        manifests_content: str, 
-        component_specs: Dict[str, str]
+        self,
+        repo_url: str,
+        repo_name: str,
+        file_tree: List[str],
+        manifests_content: str,
+        component_specs: Dict[str, str],
     ) -> str:
-        """
-        Iteratively generates the 25-section spec, 5 sections at a time.
-        """
-        self.log("Starting Stage 3: Incremental Rebuild Blueprint Generation...", "INFO")
-        
-        # Format general metadata
-        tree_str = "\n".join(file_tree[:200]) # Cap at 200 lines to keep context small
-        if len(file_tree) > 200:
-            tree_str += f"\n... ({len(file_tree) - 200} more files)"
-            
-        specs_str = ""
-        for comp, spec in component_specs.items():
-            specs_str += f"=== Component: {comp} ===\n{spec}\n\n"
-            
-        rolling_state = "No architectural choices resolved yet."
-        all_sections = []
-        
+        self.log("Starting quality-first staged rebuild blueprint generation...", "INFO")
+        self.progress(66, "Extracting structured repository findings")
+
+        analysis_state = self.build_analysis_state(
+            repo_url=repo_url,
+            repo_name=repo_name,
+            file_tree=file_tree,
+            manifests_content=manifests_content,
+            component_specs=component_specs,
+        )
+        analysis_state_markdown = self.format_analysis_state_markdown(analysis_state)
+
+        rolling_state = "No blueprint sections have been finalized yet."
+        all_sections: List[str] = []
         total_chunks = len(SECTION_CHUNKS)
-        
+
         for idx, chunk in enumerate(SECTION_CHUNKS):
-            self.log(f"Generating {chunk['range_str']} ({chunk['description']})...", "INFO")
-            
-            system_prompt = (
-                "You are an expert software architect building a clean-room specification blueprint to rebuild a repository.\n"
-                "Write only the requested sections directly. Do not include introductory comments, concluding remarks, or chat filler.\n"
-                "When sections require Mermaid diagrams, generate syntactically valid Mermaid code inside ```mermaid ... ``` fences. "
-                "Diagrams must reflect the ACTUAL components found in the repository — do not use generic placeholder names."
+            chunk_range = str(chunk["range_str"])
+            self.log(f"Drafting {chunk_range} using the shared high-quality blueprint contract...", "INFO")
+            self.progress(
+                int(70 + (idx / total_chunks) * 18),
+                f"Drafting blueprint {chunk_range}",
             )
-            
-            prompt = (
-                f"Repository: {repo_name}\n"
-                f"Repository URL: {repo_url}\n\n"
-                f"--- Overall File Tree ---\n"
-                f"{tree_str}\n\n"
-                f"--- Core Manifest / Config Content ---\n"
-                f"{manifests_content[:10000]}\n\n" # Cap manifests at 10k chars
-                f"--- Component Syntheses Specs ---\n"
-                f"{specs_str[:15000]}\n\n" # Cap specs at 15k chars
-                f"--- Rolling Design Choices Decided So Far ---\n"
-                f"{rolling_state}\n\n"
-                f"--- Target Task ---\n"
-                f"{chunk['prompt']}\n\n"
-                f"Output the sections in markdown format:"
+
+            prompt = build_section_prompt(
+                repo_name=repo_name,
+                repo_url=repo_url,
+                manifests_content=manifests_content,
+                component_specs=component_specs,
+                analysis_state_markdown=analysis_state_markdown,
+                rolling_state=rolling_state,
+                chunk_prompt=str(chunk["prompt"]),
+                file_tree=file_tree,
             )
-            
-            try:
-                resp = self.provider.generate(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.2,
-                    max_tokens=4000
+            resp = self.provider.generate(
+                prompt=prompt,
+                system_prompt=MASTER_SYSTEM_PROMPT,
+                temperature=0.2,
+                max_tokens=5000,
+            )
+            section_output = resp.strip()
+
+            issues = validate_section_output(section_output, chunk["required_headings"])
+            if issues:
+                self.log(
+                    f"Quality gate flagged {len(issues)} issue(s) for {chunk_range}. Running section repair pass...",
+                    "WARNING",
                 )
-                section_output = resp.strip()
-                all_sections.append(section_output)
-            except Exception as e:
-                self.log(f"Failed to generate {chunk['range_str']}: {str(e)}", "ERROR")
-                raise Exception(f"Incremental generation failed on {chunk['range_str']}: {str(e)}")
+                repair_prompt = build_repair_prompt(chunk_range, section_output, issues)
+                repaired = self.provider.generate(
+                    prompt=repair_prompt,
+                    system_prompt=MASTER_SYSTEM_PROMPT,
+                    temperature=0.15,
+                    max_tokens=5000,
+                )
+                repaired_output = repaired.strip()
+                repaired_issues = validate_section_output(repaired_output, chunk["required_headings"])
+                if not repaired_issues:
+                    section_output = repaired_output
+                    self.log(f"Repair pass completed successfully for {chunk_range}.", "INFO")
+                else:
+                    self.log(
+                        f"Repair pass for {chunk_range} still left {len(repaired_issues)} issue(s); keeping best available draft.",
+                        "WARNING",
+                    )
+            else:
+                self.log(f"Quality gate passed for {chunk_range}.", "INFO")
 
-            # Update rolling architectural choices if not on the last chunk
+            all_sections.append(section_output)
             if idx < total_chunks - 1:
-                self.log("Updating rolling architectural decisions state...", "INFO")
+                self.log(f"Updating rolling state after {chunk_range}...", "INFO")
                 rolling_state = self.generate_rolling_state_summary(section_output, rolling_state)
-                self.log(f"Updated Rolling State: {rolling_state}", "DEBUG")
-                
-            # Progress scale: from 65% to 90%
-            pct = int(65 + ((idx + 1) / total_chunks) * 25)
-            self.progress(pct, f"Generating blueprint ({chunk['range_str']} complete)")
 
-        self.log("All 5 blueprint chunks generated successfully.", "INFO")
-        
-        # Assemble final document
-        blueprint = "\n\n---\n\n".join(all_sections)
-        return blueprint
+        self.progress(92, "Assembling final rebuild blueprint")
+        self.log("Assembling final rebuild blueprint from validated section chunks...", "INFO")
+        return "\n\n---\n\n".join(all_sections)

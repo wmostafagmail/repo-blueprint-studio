@@ -24,6 +24,7 @@ repo-blueprint-studio/
 │   ├── requirements.txt      # Python libraries
 │   ├── app/                  # Main backend codebase
 │   └── tests/                # Automated pytest suite
+├── macos-app/                # Electron shell that reuses the shared frontend/backend
 └── frontend/                 # React & Vite SPA
     ├── package.json          # Node dependencies
     ├── index.html            # Core template shell
@@ -79,6 +80,29 @@ repo-blueprint-studio/
    npm run dev
    ```
    The web UI will be accessible at `http://localhost:3000`.
+
+---
+
+### 3. macOS Desktop Shell
+
+The macOS app is a wrapper around the same `frontend/` and `backend/` code, so future changes should continue to be made in those shared folders and will automatically apply to both the web app and the macOS app.
+
+1. Navigate to the macOS package:
+   ```bash
+   cd ../macos-app
+   ```
+2. Install Electron dependencies:
+   ```bash
+   npm install
+   ```
+3. In development, run the shared backend, shared frontend, and then start the macOS shell:
+   ```bash
+   npm run dev
+   ```
+4. To package the macOS app:
+   ```bash
+   npm run package
+   ```
 
 ---
 

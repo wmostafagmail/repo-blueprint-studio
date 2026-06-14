@@ -31,10 +31,25 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
     try {
       const newJob = await api.createJob({
         github_url: job.repo_url,
+        provider_override: job.provider,
+        model_override: job.model,
       });
       onNavigateToJob(newJob.id);
     } catch (err: any) {
       alert(`Failed to retry: ${err.message}`);
+    }
+  };
+
+  const handleResumeJob = async (job: Job) => {
+    try {
+      const newJob = await api.createJob({
+        github_url: job.repo_url,
+        provider_override: job.provider,
+        model_override: job.model,
+      });
+      onNavigateToJob(newJob.id);
+    } catch (err: any) {
+      alert(`Failed to resume: ${err.message}`);
     }
   };
 
@@ -75,97 +90,107 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                  <th className="px-6 py-4">Repository</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4">Start Time</th>
-                  <th className="px-6 py-4">Duration</th>
-                  <th className="px-6 py-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                {jobs.map((job) => {
-                  const createdDate = new Date(job.created_at).toLocaleString();
-                  
-                  // Calculate duration
-                  let durationStr = '--';
-                  if (job.started_at && job.completed_at) {
-                    const diff = new Date(job.completed_at).getTime() - new Date(job.started_at).getTime();
-                    const seconds = Math.floor(diff / 1000);
-                    const minutes = Math.floor(seconds / 60);
-                    durationStr = minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
-                  } else if (job.status === 'running') {
-                    durationStr = 'running';
-                  }
+          <div className="divide-y divide-slate-100">
+            {jobs.map((job) => {
+              const createdDate = new Date(job.created_at).toLocaleString();
 
-                  return (
-                    <tr 
-                      key={job.id} 
-                      className="hover:bg-slate-50 transition-colors cursor-pointer"
-                      onClick={() => onNavigateToJob(job.id)}
-                    >
-                      <td className="px-6 py-4">
-                        <div>
-                          <div className="font-bold text-slate-800">{job.repo_name}</div>
-                          <div className="text-xs text-slate-400 mt-0.5 max-w-xs md:max-w-md truncate font-mono">{job.repo_url}</div>
-                          {(job.provider || job.model) && (
-                            <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1.5">
-                              <span>Provider: <span className="font-semibold text-slate-500 capitalize">{job.provider}</span></span>
-                              <span className="text-slate-300">•</span>
-                              <span>Model: <span className="font-mono text-slate-500">{job.model}</span></span>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+              let durationStr = '--';
+              if (job.started_at && job.completed_at) {
+                const diff = new Date(job.completed_at).getTime() - new Date(job.started_at).getTime();
+                const seconds = Math.floor(diff / 1000);
+                const minutes = Math.floor(seconds / 60);
+                durationStr = minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+              } else if (job.status === 'running') {
+                durationStr = 'running';
+              }
+
+              return (
+                <div
+                  key={job.id}
+                  className="p-5 hover:bg-slate-50 transition-colors cursor-pointer"
+                  onClick={() => onNavigateToJob(job.id)}
+                >
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-bold text-slate-800 break-words">{job.repo_name}</div>
                         <StatusBadge status={job.status} />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-550 flex items-center space-x-1.5 mt-2 md:mt-0">
-                        <Calendar className="h-3.5 w-3.5 text-slate-450" />
-                        <span>{createdDate}</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-550 font-mono">
-                        {durationStr}
-                      </td>
-                      <td className="px-6 py-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end space-x-2">
-                          <button
-                            onClick={() => onNavigateToJob(job.id)}
-                            className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
-                          >
-                            Details
-                          </button>
-                          {(job.status === 'failed' || job.status === 'cancelled') && (
-                            <button
-                              onClick={() => handleRetryJob(job)}
-                              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors flex items-center space-x-1"
-                              title="Retry Analysis"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                              <span>Retry</span>
-                            </button>
-                          )}
-                          
-                          {job.status === 'completed' && job.download_url && (
-                            <a
-                              href={job.download_url}
-                              download
-                              className="p-1.5 text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-750 border border-indigo-100 rounded-lg transition-colors"
-                              title="Download Markdown Blueprint"
-                            >
-                              <Download className="h-4 w-4" />
-                            </a>
-                          )}
+                      </div>
+
+                      <div className="text-xs text-slate-400 font-mono break-all">
+                        {job.repo_url}
+                      </div>
+
+                      {(job.provider || job.model) && (
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                          <span>
+                            Provider: <span className="font-semibold text-slate-500 capitalize">{job.provider}</span>
+                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span>
+                            Model: <span className="font-mono text-slate-500 break-all">{job.model}</span>
+                          </span>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      )}
+
+                      <div className="grid grid-cols-1 gap-2 text-xs text-slate-550 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Calendar className="h-3.5 w-3.5 text-slate-450 shrink-0" />
+                          <span className="truncate">Started: {createdDate}</span>
+                        </div>
+                        <div className="font-mono">Duration: {durationStr}</div>
+                        <div className="font-mono truncate">Job ID: {job.id}</div>
+                      </div>
+                    </div>
+
+                    <div
+                      className="flex flex-wrap items-center gap-2 lg:justify-end"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => onNavigateToJob(job.id)}
+                        className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors"
+                      >
+                        Details
+                      </button>
+
+                      {job.status === 'failed' && (
+                        <button
+                          onClick={() => handleRetryJob(job)}
+                          className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg transition-colors flex items-center space-x-1"
+                          title="Retry Analysis"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          <span>Retry</span>
+                        </button>
+                      )}
+
+                      {job.status === 'cancelled' && (
+                        <button
+                          onClick={() => handleResumeJob(job)}
+                          className="px-3 py-1.5 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 rounded-lg transition-colors flex items-center space-x-1"
+                          title="Resume Analysis"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          <span>Resume</span>
+                        </button>
+                      )}
+
+                      {job.status === 'completed' && job.download_url && (
+                        <a
+                          href={job.download_url}
+                          download
+                          className="p-1.5 text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-750 border border-indigo-100 rounded-lg transition-colors"
+                          title="Download Markdown Blueprint"
+                        >
+                          <Download className="h-4 w-4" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

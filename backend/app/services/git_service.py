@@ -2,7 +2,7 @@ import subprocess
 import shutil
 from pathlib import Path
 from urllib.parse import urlparse
-from backend.app.utils.url_validation import is_safe_github_url
+from app.utils.url_validation import is_safe_github_url
 
 class GitService:
     @staticmethod
@@ -22,7 +22,7 @@ class GitService:
         workspace_dir.mkdir(parents=True, exist_ok=True)
         
         # Determine repository name
-        from backend.app.utils.repo_name import repo_name_from_url
+        from app.utils.repo_name import repo_name_from_url
         repo_name = repo_name_from_url(repo_url)
         repo_path = workspace_dir / repo_name
         

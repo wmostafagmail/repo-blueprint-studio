@@ -8,9 +8,10 @@ interface JobProgressCardProps {
   onCancel: () => void;
   onPreview: () => void;
   onRetry?: () => void;
+  onResume?: () => void;
 }
 
-export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel, onPreview, onRetry }) => {
+export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel, onPreview, onRetry, onResume }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopyPath = () => {
@@ -126,7 +127,7 @@ export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel,
         </div>
       )}
 
-      {(job.status === 'failed' || job.status === 'cancelled') && onRetry && (
+      {job.status === 'failed' && onRetry && (
         <div className="flex items-center gap-3 pt-2">
           <button
             onClick={onRetry}
@@ -134,6 +135,18 @@ export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel,
           >
             <RefreshCw className="h-3.5 w-3.5" />
             <span>Retry Analysis</span>
+          </button>
+        </div>
+      )}
+
+      {job.status === 'cancelled' && onResume && (
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            onClick={onResume}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-xs transition-colors flex items-center space-x-2 shadow-sm"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>Resume Analysis</span>
           </button>
         </div>
       )}

@@ -1,6 +1,12 @@
 from typing import List
 import httpx
-from backend.app.services.providers.base import BaseLLMProvider
+from app.services.providers.base import BaseLLMProvider
+from app.services.providers.provider_limits import (
+    build_limits_payload,
+    derive_output_tokens_from_context,
+    extract_int_from_keys,
+    extract_int_from_text,
+)
 
 class OllamaProvider(BaseLLMProvider):
     def __init__(self, api_key: str = "", base_url: str = "", model: str = ""):
@@ -22,7 +28,8 @@ class OllamaProvider(BaseLLMProvider):
             resp = httpx.get(url, timeout=5.0)
             if resp.status_code == 200:
                 data = resp.json()
-                return [m["name"] for m in data.get("models", [])]
+                self._models_cache = data.get("models", [])
+                return [m["name"] for m in self._models_cache]
         except Exception:
             pass
         return ["llama3", "mistral", "gemma"]
@@ -40,11 +47,44 @@ class OllamaProvider(BaseLLMProvider):
                     if k.endswith(".context_length") or k == "context_length":
                         context_length = v
                         break
+                if not context_length:
+                    context_length = extract_int_from_keys(
+                        data,
+                        ["context_length", "num_ctx", "max_context_length", "n_ctx"],
+                    )
+
+                output_tokens = extract_int_from_keys(
+                    data,
+                    [
+                        "max_output_tokens",
+                        "max_completion_tokens",
+                        "num_predict",
+                        "n_predict",
+                    ],
+                )
+
+                parameters_text = data.get("parameters", "")
+                if isinstance(parameters_text, str):
+                    if not context_length:
+                        context_length = extract_int_from_text(
+                            parameters_text,
+                            [r"num_ctx\s+(\d+)", r"context_length\s+(\d+)"],
+                        )
+                    if not output_tokens:
+                        output_tokens = extract_int_from_text(
+                            parameters_text,
+                            [r"num_predict\s+(\d+)", r"n_predict\s+(\d+)"],
+                        )
+
                 if context_length:
-                    # 1 token ≈ 4 characters, cap at 1,000,000 characters
-                    chunk_size = min(context_length * 4, 1000000)
-                    limits["chunk_size"] = chunk_size
-                    limits["chunkSize"] = chunk_size
+                    chunk_size = min(int(context_length) * 4, 1000000)
+                    output_tokens = output_tokens or derive_output_tokens_from_context(context_length)
+                    limits = build_limits_payload(
+                        output_tokens or limits["max_output_tokens"],
+                        chunk_size,
+                        source="detected",
+                        notes="Discovered from Ollama model metadata.",
+                    )
         except Exception:
             pass
         return limits

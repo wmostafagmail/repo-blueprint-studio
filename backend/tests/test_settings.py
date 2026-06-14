@@ -66,6 +66,29 @@ def test_get_models_sorting_free_first(client):
     models = res.json()["models"]
     assert models[0] == "meta-llama/llama-3-8b-instruct:free"
 
+def test_get_models_ollama_returns_limit_metadata(client):
+    from unittest.mock import patch
+    import httpx
+
+    with patch("httpx.get") as mock_get, patch("httpx.post") as mock_post:
+        mock_get.return_value = httpx.Response(200, json={
+            "models": [
+                {"name": "gemma4:latest"}
+            ]
+        })
+        mock_post.return_value = httpx.Response(200, json={
+            "model_info": {
+                "gemma4.context_length": 131072,
+            }
+        })
+
+        res = client.get("/api/settings/models?provider=ollama&base_url=http://localhost:11434")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["limits"]["gemma4:latest"]["source"] == "detected"
+        assert data["limits"]["gemma4:latest"]["notes"] == "Discovered from Ollama model metadata."
+        assert data["limits"]["gemma4:latest"]["max_output_tokens"] == 16384
+
 def test_api_keys_persistence(client, db_session):
     payload = {
         "provider": "openai",

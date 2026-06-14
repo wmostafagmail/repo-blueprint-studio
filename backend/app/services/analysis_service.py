@@ -8,17 +8,22 @@ from pathlib import Path
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
-from backend.app.config import JOBS_DIR, OUTPUTS_DIR
-from backend.app.models import Job, JobLog
-from backend.app.services.git_service import GitService
-from backend.app.services.redaction_service import redact_secrets
-from backend.app.services.providers import get_provider
-from backend.app.utils.file_filters import is_important_file
-from backend.app.services.summary_service import SummaryMapService
-from backend.app.services.reduce_service import ReduceService
-from backend.app.services.incremental_generator import IncrementalSpecGenerator
+from app.config import JOBS_DIR, OUTPUTS_DIR
+from app.models import Job, JobLog
+from app.services.git_service import GitService
+from app.services.redaction_service import redact_secrets
+from app.services.providers import get_provider
+from app.services.providers.provider_limits import is_local_provider_name
+from app.utils.file_filters import is_important_file
+from app.services.summary_service import SummaryMapService
+from app.services.reduce_service import ReduceService
+from app.services.incremental_generator import IncrementalSpecGenerator
 
 logger = logging.getLogger(__name__)
+
+LOCAL_DIRECT_MODE_MIN_OUTPUT_TOKENS = 6000
+LOCAL_DIRECT_MODE_MIN_CHUNK_SIZE = 50000
+DEFAULT_QUALITY_STRATEGY = "hierarchical"
 
 class AnalysisService:
     def __init__(self, db: Session, job_id: str):
@@ -28,7 +33,7 @@ class AnalysisService:
     def log(self, message: str, level: str = "INFO"):
         """Logs a message to Python logging and inserts it into the SQLite database."""
         logger.info(f"[{self.job_id}] {level}: {message}")
-        from backend.app.database import SessionLocal
+        from app.database import SessionLocal
         db = SessionLocal()
         try:
             log_entry = JobLog(job_id=self.job_id, level=level, message=message)
@@ -44,7 +49,7 @@ class AnalysisService:
         if status not in ["cancelled", "failed", "completed"]:
             self.check_cancelled()
             
-        from backend.app.database import SessionLocal
+        from app.database import SessionLocal
         db = SessionLocal()
         try:
             job = db.query(Job).filter(Job.id == self.job_id).first()
@@ -66,8 +71,15 @@ class AnalysisService:
         finally:
             db.close()
 
+    def log_stage(self, stage: str, message: str, level: str = "INFO", **details):
+        detail_text = ""
+        if details:
+            parts = [f"{key}={value}" for key, value in details.items()]
+            detail_text = " | " + ", ".join(parts)
+        self.log(f"[{stage}] {message}{detail_text}", level)
+
     def check_cancelled(self):
-        from backend.app.database import SessionLocal
+        from app.database import SessionLocal
         db = SessionLocal()
         try:
             job = db.query(Job).filter(Job.id == self.job_id).first()
@@ -86,7 +98,7 @@ class AnalysisService:
             self.log(f"Starting analysis for repository: {repo_url}")
             
             # Fetch settings
-            from backend.app.models import Setting
+            from app.models import Setting
             settings = self.db.query(Setting).first()
             if not settings:
                 raise Exception("System settings not found. Please configure settings first.")
@@ -132,10 +144,10 @@ class AnalysisService:
             # Step 1: Clone Repository
             self.check_cancelled()
             self.update_job(10, "Cloning repository")
-            self.log("Cloning repository into temporary workspace...")
+            self.log_stage("clone", "Cloning repository into temporary workspace...")
             repo_path = GitService.clone_repository(repo_url, workspace_path, token)
             repo_name = repo_path.name
-            self.log(f"Successfully cloned repository: {repo_name}")
+            self.log_stage("clone", "Repository cloned successfully.", repo_name=repo_name, workspace=str(repo_path))
 
             # Locate Extractor Scripts dynamically by walking up parents
             extractor_dir = None
@@ -167,8 +179,8 @@ class AnalysisService:
 
             # Step 2: Run Inventory Script
             self.check_cancelled()
-            self.update_job(25, "Generating repository inventory")
-            self.log("Running repo_inventory.py...")
+            self.update_job(18, "Generating repository inventory")
+            self.log_stage("inventory", "Running repo_inventory.py...", script=str(inventory_script))
             docs_dir = repo_path / "docs"
             docs_dir.mkdir(parents=True, exist_ok=True)
             inventory_json_path = docs_dir / "inventory" / f"{repo_name}_inventory.json"
@@ -186,11 +198,11 @@ class AnalysisService:
             if res.returncode != 0:
                 raise Exception(f"Inventory generation failed: {res.stderr}")
                 
-            self.log(f"Inventory written to: {inventory_json_path}")
+            self.log_stage("inventory", "Inventory written.", output=str(inventory_json_path))
             
             # Step 3: Parse Inventory & Load Core Metadata
             self.check_cancelled()
-            self.update_job(40, "Analyzing repository file structure")
+            self.update_job(28, "Analyzing repository file structure")
             with open(inventory_json_path, "r", encoding="utf-8") as f:
                 inventory_data = json.load(f)
                 
@@ -198,11 +210,16 @@ class AnalysisService:
             manifests = summary.get("manifest_files", [])
             files_list = inventory_data.get("files", [])
             
-            self.log(f"Found {summary.get('file_count_included', 0)} files in repository inventory.")
-            self.log(f"Detected manifests: {', '.join(manifests)}")
+            self.log_stage(
+                "inventory",
+                "Repository inventory parsed.",
+                file_count=summary.get("file_count_included", 0),
+                manifest_count=len(manifests),
+            )
+            self.log_stage("inventory", "Detected manifests.", manifests=", ".join(manifests) or "none")
 
-            # Bypass real LLM if provider is 'mock' and strategy is 'direct'
-            if provider_name.lower() == "mock" and getattr(settings, "analysis_strategy", "direct") != "hierarchical":
+            # Optional fast path for explicit mock/direct local testing only.
+            if provider_name.lower() == "mock" and getattr(settings, "analysis_strategy", DEFAULT_QUALITY_STRATEGY) == "direct":
                 self.check_cancelled()
                 self.update_job(60, "Generating blueprint via Mock Provider")
                 self.log("Using Mock Provider to create rebuild blueprint...")
@@ -233,6 +250,8 @@ class AnalysisService:
             limits = provider.get_model_limits(model_name)
             resolved_max_output_tokens = limits["max_output_tokens"]
             resolved_chunk_size = limits["chunk_size"]
+            limit_source = limits.get("source", "fallback")
+            limit_notes = limits.get("notes", "")
             
             # If no override was requested, prefer using settings value unless it's default/unconfigured
             if not model_override and not provider_override:
@@ -241,16 +260,32 @@ class AnalysisService:
                 if settings.chunk_size:
                     resolved_chunk_size = settings.chunk_size
 
-            self.log(f"Model limits resolved: context window / chunk size = {resolved_chunk_size} chars, max output = {resolved_max_output_tokens} tokens")
+            self.log(
+                f"Model limits resolved: context window / chunk size = {resolved_chunk_size} chars, "
+                f"max output = {resolved_max_output_tokens} tokens (source: {limit_source})"
+            )
+            if limit_notes:
+                self.log(f"Model limits note: {limit_notes}", "DEBUG")
             
             # Branch based on Strategy
-            strategy = getattr(settings, "analysis_strategy", "direct")
-            
-            if strategy == "hierarchical":
+            strategy = getattr(settings, "analysis_strategy", DEFAULT_QUALITY_STRATEGY)
+            effective_strategy = DEFAULT_QUALITY_STRATEGY
+            if strategy != DEFAULT_QUALITY_STRATEGY:
+                self.log_stage(
+                    "strategy",
+                    "Quality-first pipeline overrides the selected strategy to preserve consistent output quality across models.",
+                    "WARNING",
+                    requested=strategy,
+                    effective=effective_strategy,
+                )
+            else:
+                self.log_stage("strategy", "Quality-first staged analysis enabled.", effective=effective_strategy)
+
+            if effective_strategy == "hierarchical":
                 self.log("Hierarchical Map-Reduce Strategy enabled.", "INFO")
                 
                 # Step 4: Map Phase - summarize files in parallel
-                self.update_job(25, "Mapping files (0% completed)")
+                self.update_job(34, "Preparing evidence extraction")
                 map_service = SummaryMapService(
                     provider=provider,
                     workspace_path=workspace_path,
@@ -259,16 +294,28 @@ class AnalysisService:
                 )
                 
                 allowed_files = []
+                skipped_for_size = 0
+                skipped_for_type = 0
                 for f in files_list:
                     # Max file size limit
                     if f["size_bytes"] > settings.max_file_size_kb * 1024:
+                        skipped_for_size += 1
                         continue
                     ext = Path(f["path"]).suffix.lower()
                     if ext in [".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".woff", ".woff2", ".ttf"]:
+                        skipped_for_type += 1
                         continue
                     allowed_files.append(f)
                     
-                self.log(f"Filtered to {len(allowed_files)} candidate files for summarization.", "INFO")
+                self.log_stage(
+                    "evidence",
+                    "Prepared candidate files for summarization.",
+                    candidates=len(allowed_files),
+                    skipped_for_size=skipped_for_size,
+                    skipped_for_type=skipped_for_type,
+                    map_batch_size=getattr(settings, "map_batch_size", 5),
+                )
+                self.update_job(38, f"Summarizing {len(allowed_files)} candidate files")
                 summaries = map_service.map_codebase(
                     files_list=allowed_files,
                     repo_path=repo_path,
@@ -277,7 +324,7 @@ class AnalysisService:
                 
                 # Step 5: Reduce Phase - synthesize components
                 self.check_cancelled()
-                self.update_job(50, "Synthesizing components")
+                self.update_job(55, "Synthesizing architectural components")
                 reduce_service = ReduceService(
                     provider=provider,
                     workspace_path=workspace_path,
@@ -285,9 +332,16 @@ class AnalysisService:
                     progress_fn=self.update_job
                 )
                 component_specs = reduce_service.reduce_summaries(summaries)
+                self.log_stage(
+                    "synthesis",
+                    "Component synthesis complete.",
+                    components=len(component_specs),
+                    summary_records=len(summaries),
+                )
                 
                 # Step 6: Load manifests content for global context
                 manifests_context_list = []
+                manifest_paths = []
                 for f_entry in allowed_files:
                     f_path_str = f_entry["path"]
                     f_path = repo_path / f_path_str
@@ -295,13 +349,20 @@ class AnalysisService:
                         try:
                             content = f_path.read_text(encoding="utf-8", errors="ignore")
                             manifests_context_list.append(f"File: {f_path_str}\n```\n{content}\n```")
+                            manifest_paths.append(f_path_str)
                         except Exception:
                             pass
                 manifests_content = "\n\n".join(manifests_context_list)
+                self.log_stage(
+                    "evidence",
+                    "Collected manifest/config evidence for final generation.",
+                    manifest_files=len(manifest_paths),
+                    manifest_chars=len(manifests_content),
+                )
                 
                 # Step 7: Incremental generation of final blueprint
                 self.check_cancelled()
-                self.update_job(65, "Generating Rebuild Blueprint")
+                self.update_job(64, "Generating rebuild blueprint sections")
                 generator = IncrementalSpecGenerator(
                     provider=provider,
                     workspace_path=workspace_path,
@@ -315,6 +376,12 @@ class AnalysisService:
                     file_tree=file_tree_list,
                     manifests_content=manifests_content,
                     component_specs=component_specs
+                )
+                self.log_stage(
+                    "assembly",
+                    "Blueprint generation completed.",
+                    output_chars=len(blueprint_content),
+                    section_chunks="4 validated chunks",
                 )
                 
                 # Prepend metadata card
@@ -332,6 +399,18 @@ class AnalysisService:
                 
             else:
                 self.log("Direct Strategy enabled.", "INFO")
+                if (
+                    is_local_provider_name(provider_name)
+                    and (
+                        resolved_max_output_tokens < LOCAL_DIRECT_MODE_MIN_OUTPUT_TOKENS
+                        or resolved_chunk_size < LOCAL_DIRECT_MODE_MIN_CHUNK_SIZE
+                    )
+                ):
+                    self.log(
+                        "Local model capacity looks tight for direct generation. "
+                        "Consider switching to Hierarchical Map-Reduce mode for larger repositories or longer blueprints.",
+                        "WARNING",
+                    )
                 # Step 4: Extract configuration and readme data
                 self.update_job(50, "Extracting configurations and Readmes")
                 code_context = []
@@ -446,7 +525,7 @@ class AnalysisService:
                 blueprint_content = metadata_header + blueprint_content
             
             # Step 8: Save Outputs
-            self.update_job(90, "Saving rebuild blueprint")
+            self.update_job(95, "Saving rebuild blueprint")
             output_md_name = f"{repo_name}_REBUILD_BLUEPRINT.md"
             repo_output_path = docs_dir / output_md_name
             repo_output_path.write_text(blueprint_content, encoding="utf-8")
@@ -462,11 +541,11 @@ class AnalysisService:
             
             # Clean up cloned repo if configured
             if not settings.keep_cloned_repos:
-                self.log("Cleaning up cloned repository workspace...")
+                self.log_stage("cleanup", "Cleaning up cloned repository workspace...")
                 shutil.rmtree(repo_path)
                 
             self.update_job(100, "Analysis complete", "completed", output_path=str(local_output_path))
-            self.log(f"Rebuild blueprint saved successfully to {local_output_path}")
+            self.log_stage("complete", "Rebuild blueprint saved successfully.", output=str(local_output_path))
 
         except Exception as e:
             err_msg = str(e)

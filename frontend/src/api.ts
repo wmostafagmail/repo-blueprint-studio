@@ -47,12 +47,31 @@ export interface TestConnectionResponse {
   message: string;
 }
 
+export interface ModelLimit {
+  maxOutputTokens: number;
+  chunkSize: number;
+  max_output_tokens: number;
+  chunk_size: number;
+  source?: string;
+  notes?: string;
+}
+
 export interface BlueprintPreviewResponse {
   repo_name: string;
   markdown: string;
 }
 
-const API_BASE = '/api';
+declare global {
+  interface Window {
+    repoBlueprintDesktop?: {
+      apiBaseUrl?: string;
+      isDesktop?: boolean;
+      platform?: string;
+    };
+  }
+}
+
+const API_BASE = window.repoBlueprintDesktop?.apiBaseUrl || '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
@@ -101,7 +120,7 @@ export const api = {
     const query = new URLSearchParams(cleanParams).toString();
     return request<{ 
       models: string[]; 
-      limits?: Record<string, { maxOutputTokens: number; chunkSize: number; max_output_tokens: number; chunk_size: number }>;
+      limits?: Record<string, ModelLimit>;
     }>(`/settings/models?${query}`);
   },
 

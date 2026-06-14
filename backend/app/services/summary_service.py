@@ -5,6 +5,11 @@ from typing import List, Dict, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
+from app.services.prompt_builders import (
+    SUMMARY_SYSTEM_PROMPT,
+    build_file_summary_prompt,
+)
+
 logger = logging.getLogger(__name__)
 
 def should_preserve_raw(path_str: str) -> bool:
@@ -80,23 +85,8 @@ class SummaryMapService:
             return summary_data
 
         # Case B: LLM Summarization
-        system_prompt = (
-            "You are a technical code analyzer. Your task is to provide a highly concise architectural summary of the provided source code file. "
-            "Do not write conversational preamble. Return a raw JSON object with the following fields:\n"
-            "{\n"
-            "  \"responsibilities\": [\"List of 2-3 main duties of this file\"],\n"
-            "  \"exports\": [\"Important classes, functions, or variables exported\"],\n"
-            "  \"dependencies\": [\"Files or packages imported/required\"]\n"
-            "}"
-        )
-
-        prompt = (
-            f"File relative path: {file_path}\n"
-            f"Source code:\n"
-            f"```\n"
-            f"{content[:20000]}  # Truncated to first 20k chars if huge\n"
-            f"```\n"
-        )
+        system_prompt = SUMMARY_SYSTEM_PROMPT
+        prompt = build_file_summary_prompt(file_path, content)
 
         try:
             resp = self.provider.generate(
@@ -122,7 +112,8 @@ class SummaryMapService:
                     "type": "summary",
                     "responsibilities": parsed_json.get("responsibilities", []),
                     "exports": parsed_json.get("exports", []),
-                    "dependencies": parsed_json.get("dependencies", [])
+                    "dependencies": parsed_json.get("dependencies", []),
+                    "evidence": parsed_json.get("evidence", [])
                 }
             except Exception:
                 # Fallback to plain text if JSON parse failed

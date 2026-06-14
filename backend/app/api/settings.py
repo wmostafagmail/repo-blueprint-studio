@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Optional
 from sqlalchemy.orm import Session
-from backend.app.database import get_db
-from backend.app.models import Setting
-from backend.app.schemas import SettingUpdate, SettingResponse, TestConnectionRequest, TestConnectionResponse
-from backend.app.config import mask_secret
-from backend.app.services.providers import get_provider
+from app.database import get_db
+from app.models import Setting
+from app.schemas import SettingUpdate, SettingResponse, TestConnectionRequest, TestConnectionResponse
+from app.config import mask_secret
+from app.services.providers import get_provider
 
 router = APIRouter()
 

@@ -4,6 +4,11 @@ from pathlib import Path
 from typing import List, Dict, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from app.services.prompt_builders import (
+    COMPONENT_SYSTEM_PROMPT,
+    build_component_prompt,
+)
+
 logger = logging.getLogger(__name__)
 
 class ReduceService:
@@ -70,11 +75,13 @@ class ReduceService:
                 resp = ", ".join(s.get("responsibilities", []))
                 exp = ", ".join(s.get("exports", []))
                 dep = ", ".join(s.get("dependencies", []))
+                evidence = "; ".join(s.get("evidence", []))
                 formatted_files.append(
                     f"File: {p} [Type: Summary]\n"
                     f" - Responsibilities: {resp}\n"
                     f" - Key Exports: {exp}\n"
-                    f" - Imports/Deps: {dep}"
+                    f" - Imports/Deps: {dep}\n"
+                    f" - Evidence: {evidence}"
                 )
             else:
                 formatted_files.append(
@@ -84,18 +91,8 @@ class ReduceService:
                 
         context_str = "\n\n".join(formatted_files)
         
-        system_prompt = (
-            f"You are an expert software architect. Your task is to write a highly detailed architectural synthesis for the module/component: '{component_name}'.\n"
-            "Based on the provided file summaries and raw code, describe the component's primary duties, key APIs/exports, dependencies, and database/external integrations.\n"
-            "Be technical, clear, and direct. Do not write conversational preamble."
-        )
-        
-        prompt = (
-            f"Component Name: {component_name}\n"
-            f"Files and summaries contained in this component:\n\n"
-            f"{context_str}\n\n"
-            f"Provide the architectural synthesis for {component_name}:"
-        )
+        system_prompt = COMPONENT_SYSTEM_PROMPT
+        prompt = build_component_prompt(component_name, context_str)
         
         try:
             resp = self.provider.generate(

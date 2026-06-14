@@ -1,6 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import List
 
+from app.services.providers.provider_limits import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    build_limits_payload,
+    infer_local_model_profile,
+)
+
 class BaseLLMProvider(ABC):
     """
     Abstract Base Class for all LLM Providers.
@@ -33,10 +40,10 @@ class BaseLLMProvider(ABC):
         for the given model name.
         """
         model = model_name.lower()
-        
-        # Default fallbacks
-        max_output_tokens = 4000
-        chunk_size = 10000
+        max_output_tokens = DEFAULT_MAX_OUTPUT_TOKENS
+        chunk_size = DEFAULT_CHUNK_SIZE
+        source = "fallback"
+        notes = ""
         
         # Check cache if available (populated by list_models)
         cache = getattr(self, "_models_cache", None)
@@ -56,6 +63,8 @@ class BaseLLMProvider(ABC):
                             max_tokens = top_prov.get("max_completion_tokens")
                             if max_tokens:
                                 max_output_tokens = max_tokens
+                        source = "detected"
+                        notes = "Discovered from provider model metadata."
                         break
             elif class_name == "GeminiProvider":
                 for m in cache:
@@ -67,35 +76,43 @@ class BaseLLMProvider(ABC):
                             chunk_size = min(int(input_limit) * 4, 1000000)
                         if output_limit:
                             max_output_tokens = int(output_limit)
+                        source = "detected"
+                        notes = "Discovered from provider model metadata."
                         break
 
         # Fallback mappings based on model name substrings (for Ollama, OpenAI, or if cache lookup failed)
-        if chunk_size == 10000 and max_output_tokens == 4000:
+        if chunk_size == DEFAULT_CHUNK_SIZE and max_output_tokens == DEFAULT_MAX_OUTPUT_TOKENS:
             # Gemini Pro (huge context)
             if any(x in model for x in ["gemini-1.5-pro", "gemini-2.0-pro", "gemini-2.5-pro", "gemini-3.5-pro", "gemini-pro"]):
                 max_output_tokens = 8192
                 chunk_size = 500000
+                source = "fallback"
+                notes = "Fallback profile inferred from Gemini Pro model family."
             # Gemini Flash / Standard (large context)
             elif any(x in model for x in ["gemini-1.5", "gemini-2.5", "gemini-2.0", "gemini-3.5", "gemini-3.1", "gemini-"]):
                 max_output_tokens = 8192
                 chunk_size = 200000
+                source = "fallback"
+                notes = "Fallback profile inferred from Gemini model family."
             # GPT-4o Mini / o1 / o3 Mini (large output, medium context)
             elif any(x in model for x in ["gpt-4o-mini", "o1-mini", "o3-mini"]):
                 max_output_tokens = 16384
                 chunk_size = 60000
+                source = "fallback"
+                notes = "Fallback profile inferred from compact reasoning model family."
             # GPT-4 / GPT-4o / Claude / o1 / o3
             elif any(x in model for x in ["gpt-4", "gpt-4o", "claude-3", "claude-3.5", "o1", "o3"]):
                 max_output_tokens = 8192 if "claude" in model else 4096
                 chunk_size = 80000 if "claude" in model or "gpt-4o" in model else 60000
-            # Local models / Ollama / LM Studio (small context)
+                source = "fallback"
+                notes = "Fallback profile inferred from cloud model family."
+            # Local models / Ollama / LM Studio
             elif any(x in model for x in ["llama-3", "mistral", "gemma", "phi"]):
-                max_output_tokens = 4096
-                chunk_size = 15000
-                
-        return {
-            "max_output_tokens": max_output_tokens,
-            "maxOutputTokens": max_output_tokens,
-            "chunk_size": chunk_size,
-            "chunkSize": chunk_size
-        }
+                return infer_local_model_profile(model_name)
 
+        return build_limits_payload(
+            max_output_tokens,
+            chunk_size,
+            source=source,
+            notes=notes,
+        )

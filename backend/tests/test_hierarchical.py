@@ -8,7 +8,7 @@ from backend.app.services.reduce_service import ReduceService
 from backend.app.services.incremental_generator import IncrementalSpecGenerator
 from backend.app.services.providers.mock_provider import MockProvider
 from backend.app.services.analysis_service import AnalysisService
-from backend.app.models import Setting, Job
+from backend.app.models import Setting, Job, JobLog
 
 def test_should_preserve_raw_rules():
     assert should_preserve_raw("package.json") is True
@@ -102,8 +102,8 @@ def test_incremental_spec_generator_chunks(tmp_path):
     
     # Verify that the blueprint was assembled and contains mock output
     assert len(blueprint) > 0
-    # Direct mock provider output contains title
-    assert "# test-repo Rebuild Blueprint" in blueprint
+    assert "## 0. Generation Metadata" in blueprint
+    assert "## 19. Rebuild Readiness Checklist" in blueprint
 
 def test_full_hierarchical_analysis_pipeline(client, db_session, tmp_path):
     # Set settings to hierarchical
@@ -156,3 +156,57 @@ def test_full_hierarchical_analysis_pipeline(client, db_session, tmp_path):
             assert output_file.exists()
             content = output_file.read_text(encoding="utf-8")
             assert "Hierarchical (Map-Reduce)" in content
+
+def test_direct_analysis_is_promoted_to_quality_first_pipeline(db_session, tmp_path):
+    setting = db_session.query(Setting).first()
+    setting.provider = "ollama"
+    setting.model = "llama3"
+    setting.analysis_strategy = "direct"
+    setting.base_url = "http://localhost:11434"
+    setting.max_output_tokens = 4096
+    setting.chunk_size = 20000
+    db_session.commit()
+
+    job = Job(
+        id="test-job-direct-local-warning",
+        repo_url="https://github.com/mock/repo.git",
+        repo_name="mock-repo",
+        status="queued"
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    class FakeLocalProvider:
+        def get_model_limits(self, model_name: str):
+            return {
+                "max_output_tokens": 4096,
+                "maxOutputTokens": 4096,
+                "chunk_size": 20000,
+                "chunkSize": 20000,
+                "source": "detected",
+                "notes": "Detected from local runtime."
+            }
+
+        def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
+            return "# Direct Blueprint\n\nGenerated"
+
+    with patch("backend.app.services.git_service.GitService.clone_repository") as mock_clone, \
+         patch("backend.app.services.analysis_service.get_provider", return_value=FakeLocalProvider()), \
+         patch("backend.app.services.analysis_service.JOBS_DIR", tmp_path / "jobs"), \
+         patch("backend.app.services.analysis_service.OUTPUTS_DIR", tmp_path / "outputs"):
+        repo_dir = tmp_path / "cloned_repo_direct"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "README.md").write_text("# Sample Repo")
+        (repo_dir / "package.json").write_text('{"name": "mock"}')
+        mock_clone.return_value = repo_dir
+
+        (tmp_path / "jobs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "outputs").mkdir(parents=True, exist_ok=True)
+
+        analysis_service = AnalysisService(db_session, job.id)
+        analysis_service.run_analysis(job.repo_url)
+
+    logs = db_session.query(JobLog).filter(JobLog.job_id == job.id).all()
+    log_messages = [entry.message for entry in logs]
+    assert any("overrides the selected strategy" in message for message in log_messages)
+    assert any("quality-first staged analysis" in message.lower() or "quality-first" in message.lower() for message in log_messages)

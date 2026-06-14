@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.app.database import init_db
-from backend.app.api import health, settings, jobs
+from app.database import init_db
+from app.api import health, settings, jobs
 
 # Initialize FastAPI application
 app = FastAPI(

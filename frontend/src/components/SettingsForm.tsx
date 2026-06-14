@@ -1,37 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import { Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
-import { api, Setting } from '../api';
+import { api, ModelLimit, Setting } from '../api';
 
-interface ModelLimits {
-  maxOutputTokens: number;
-  chunkSize: number;
-}
+const isLocalProvider = (provider: string): boolean => provider === 'ollama' || provider === 'lmstudio';
 
-const getModelLimits = (modelName: string): ModelLimits => {
+const getModelLimits = (modelName: string): ModelLimit => {
   const model = modelName.toLowerCase();
   
   // Gemini Pro (huge context)
   if (model.includes('gemini-1.5-pro') || model.includes('gemini-2.0-pro') || model.includes('gemini-2.5-pro')) {
-    return { maxOutputTokens: 8192, chunkSize: 500000 };
+    return { maxOutputTokens: 8192, chunkSize: 500000, max_output_tokens: 8192, chunk_size: 500000, source: 'fallback', notes: 'Fallback profile inferred from Gemini Pro model family.' };
   }
   // Gemini Flash / Standard (large context)
   if (model.includes('gemini-1.5') || model.includes('gemini-2.5') || model.includes('gemini-2.0') || model.includes('gemini-')) {
-    return { maxOutputTokens: 8192, chunkSize: 200000 };
+    return { maxOutputTokens: 8192, chunkSize: 200000, max_output_tokens: 8192, chunk_size: 200000, source: 'fallback', notes: 'Fallback profile inferred from Gemini model family.' };
   }
   // GPT-4o Mini / o1 / o3 Mini (large output, medium context)
   if (model.includes('gpt-4o-mini') || model.includes('o1-mini') || model.includes('o3-mini')) {
-    return { maxOutputTokens: 16384, chunkSize: 60000 };
+    return { maxOutputTokens: 16384, chunkSize: 60000, max_output_tokens: 16384, chunk_size: 60000, source: 'fallback', notes: 'Fallback profile inferred from compact reasoning model family.' };
   }
   // GPT-4 / GPT-4o / Claude (medium output, medium context)
   if (model.includes('gpt-4') || model.includes('claude-3') || model.includes('claude-3.5') || model.includes('gpt-4o')) {
-    return { maxOutputTokens: 4096, chunkSize: 60000 };
+    return { maxOutputTokens: 4096, chunkSize: 60000, max_output_tokens: 4096, chunk_size: 60000, source: 'fallback', notes: 'Fallback profile inferred from cloud model family.' };
   }
-  // Local models / Ollama / LM Studio (small context)
-  if (model.includes('llama-3') || model.includes('mistral') || model.includes('gemma') || model.includes('phi')) {
-    return { maxOutputTokens: 4096, chunkSize: 15000 };
+  if (model.includes('128k') || model.includes('131k') || model.includes('200k') || model.includes('256k') || model.includes('1m')) {
+    return { maxOutputTokens: 16384, chunkSize: 240000, max_output_tokens: 16384, chunk_size: 240000, source: 'fallback', notes: 'Large-context local model fallback profile.' };
   }
-  
-  return { maxOutputTokens: 4000, chunkSize: 10000 }; // default mock/generic fallback
+  if (model.includes('64k') || model.includes('65k') || model.includes('70b') || model.includes('72b') || model.includes('mixtral') || model.includes('qwen2.5') || model.includes('qwen3') || model.includes('deepseek') || model.includes('coder')) {
+    return { maxOutputTokens: 12288, chunkSize: 120000, max_output_tokens: 12288, chunk_size: 120000, source: 'fallback', notes: 'Expanded local model fallback profile.' };
+  }
+  if (model.includes('llama3.1') || model.includes('llama-3.1') || model.includes('gemma3') || model.includes('mistral-nemo') || model.includes('32k')) {
+    return { maxOutputTokens: 8192, chunkSize: 80000, max_output_tokens: 8192, chunk_size: 80000, source: 'fallback', notes: 'Medium-capacity local model fallback profile.' };
+  }
+  if (model.includes('llama-3') || model.includes('llama3') || model.includes('mistral') || model.includes('gemma') || model.includes('phi')) {
+    return { maxOutputTokens: 4096, chunkSize: 20000, max_output_tokens: 4096, chunk_size: 20000, source: 'fallback', notes: 'Conservative local model fallback profile.' };
+  }
+
+  return { maxOutputTokens: 4000, chunkSize: 10000, max_output_tokens: 4000, chunk_size: 10000, source: 'fallback', notes: 'Generic fallback profile.' };
 };
 
 export const SettingsForm: React.FC = () => {
@@ -49,7 +54,7 @@ export const SettingsForm: React.FC = () => {
     github_token: '',
     output_dir: '',
     keep_cloned_repos: false,
-    analysis_strategy: 'direct',
+    analysis_strategy: 'hierarchical',
     map_batch_size: 5,
     generate_chunk_size: 5,
   });
@@ -62,7 +67,7 @@ export const SettingsForm: React.FC = () => {
 
   // Models listing states
   const [models, setModels] = useState<string[]>([]);
-  const [modelsLimits, setModelsLimits] = useState<Record<string, ModelLimits>>({});
+  const [modelsLimits, setModelsLimits] = useState<Record<string, ModelLimit>>({});
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
 
@@ -70,8 +75,8 @@ export const SettingsForm: React.FC = () => {
     if (prov === 'mock') {
       setModels(['mock-model-v1', 'mock-model-v2']);
       setModelsLimits({
-        'mock-model-v1': { maxOutputTokens: 4000, chunkSize: 10000 },
-        'mock-model-v2': { maxOutputTokens: 4000, chunkSize: 10000 },
+        'mock-model-v1': { maxOutputTokens: 4000, chunkSize: 10000, max_output_tokens: 4000, chunk_size: 10000, source: 'fallback', notes: 'Mock provider fallback profile.' },
+        'mock-model-v2': { maxOutputTokens: 4000, chunkSize: 10000, max_output_tokens: 4000, chunk_size: 10000, source: 'fallback', notes: 'Mock provider fallback profile.' },
       });
       setModelsError(null);
       return;
@@ -87,12 +92,16 @@ export const SettingsForm: React.FC = () => {
       });
       setModels(data.models || []);
       
-      const limitsMap: Record<string, ModelLimits> = {};
+      const limitsMap: Record<string, ModelLimit> = {};
       if (data.limits) {
         Object.entries(data.limits).forEach(([mName, l]) => {
           limitsMap[mName] = {
             maxOutputTokens: l.maxOutputTokens ?? l.max_output_tokens ?? 4000,
-            chunkSize: l.chunkSize ?? l.chunk_size ?? 10000
+            chunkSize: l.chunkSize ?? l.chunk_size ?? 10000,
+            max_output_tokens: l.max_output_tokens ?? l.maxOutputTokens ?? 4000,
+            chunk_size: l.chunk_size ?? l.chunkSize ?? 10000,
+            source: l.source ?? 'fallback',
+            notes: l.notes ?? ''
           };
         });
       }
@@ -215,6 +224,16 @@ export const SettingsForm: React.FC = () => {
     );
   }
 
+  const selectedModelLimits = settings.model ? (modelsLimits[settings.model] || getModelLimits(settings.model)) : null;
+  const usesSavedOverride = !!selectedModelLimits && (
+    settings.max_output_tokens !== selectedModelLimits.maxOutputTokens ||
+    settings.chunk_size !== selectedModelLimits.chunkSize
+  );
+  const showLocalCapacityHint = isLocalProvider(settings.provider) && !!selectedModelLimits;
+  const localCapacityLooksSmall = !!selectedModelLimits && (
+    selectedModelLimits.maxOutputTokens < 6000 || selectedModelLimits.chunkSize < 50000
+  );
+
   return (
     <form onSubmit={handleSave} className="space-y-6">
       {/* Provider Details Card */}
@@ -289,6 +308,29 @@ export const SettingsForm: React.FC = () => {
               <p className="text-[10px] text-slate-400 mt-1 italic">
                 Note: Could not list models ({modelsError}). Enter name manually.
               </p>
+            )}
+            {showLocalCapacityHint && selectedModelLimits && (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+                <div className="font-semibold text-slate-700">
+                  {selectedModelLimits.source === 'detected' ? 'Detected local capacity' : 'Fallback local capacity'}
+                </div>
+                <div>
+                  Recommended max output: {selectedModelLimits.maxOutputTokens.toLocaleString()} tokens. Recommended context chunk: {selectedModelLimits.chunkSize.toLocaleString()} chars.
+                </div>
+                {selectedModelLimits.notes && (
+                  <div>{selectedModelLimits.notes}</div>
+                )}
+                {usesSavedOverride && (
+                  <div className="text-indigo-700">
+                    Current saved settings differ from the recommendation, so you are using a manual override.
+                  </div>
+                )}
+                {localCapacityLooksSmall && (
+                  <div className="text-amber-700">
+                    This local model still looks small for direct mode. Hierarchical Map-Reduce is recommended for larger repositories.
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -368,7 +410,7 @@ export const SettingsForm: React.FC = () => {
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
         <h3 className="text-base font-bold text-slate-800 mb-2">Analysis Strategy</h3>
         <p className="text-xs text-slate-500 mb-4">
-          Choose between Direct analysis (single prompt, suited for large LLMs) or Hierarchical Map-Reduce (incremental analysis, highly recommended for smaller LLMs or larger projects).
+          Quality-first staged analysis is now the default pipeline for every model. Hierarchical Map-Reduce is the canonical path because it keeps output quality consistent across cloud and local models and emits richer execution logs.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -376,13 +418,16 @@ export const SettingsForm: React.FC = () => {
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Strategy</label>
             <select
               name="analysis_strategy"
-              value={settings.analysis_strategy || 'direct'}
+              value={settings.analysis_strategy || 'hierarchical'}
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
             >
-              <option value="direct">Direct (Single Prompt - Large Models)</option>
-              <option value="hierarchical">Hierarchical (Map-Reduce - Local/Small Models)</option>
+              <option value="hierarchical">Hierarchical (Quality-First Default)</option>
+              <option value="direct">Direct (Legacy / Fast Mock Testing)</option>
             </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Even if `Direct` is selected, the backend may promote the run to the quality-first staged pipeline to preserve blueprint completeness.
+            </p>
           </div>
 
           {settings.analysis_strategy === 'hierarchical' && (
@@ -477,10 +522,17 @@ export const SettingsForm: React.FC = () => {
             <input
               type="number"
               name="max_output_tokens"
+              min="512"
+              max="32768"
               value={settings.max_output_tokens}
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
             />
+            {showLocalCapacityHint && selectedModelLimits && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Recommended for this local model: {selectedModelLimits.maxOutputTokens.toLocaleString()} tokens ({selectedModelLimits.source === 'detected' ? 'runtime-detected' : 'fallback estimate'}).
+              </p>
+            )}
           </div>
 
           <div className="md:col-span-2">
@@ -488,11 +540,18 @@ export const SettingsForm: React.FC = () => {
             <input
               type="number"
               name="chunk_size"
+              min="4000"
+              max="1000000"
               value={settings.chunk_size}
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
               title="Limits total repository files content character size sent to the model to avoid exceeding the context limit."
             />
+            {showLocalCapacityHint && selectedModelLimits && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Local capacity depends on the loaded runtime model and server configuration. For bigger jobs, use hierarchical mode when this recommendation stays small.
+              </p>
+            )}
           </div>
         </div>
 

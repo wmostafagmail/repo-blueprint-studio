@@ -1,6 +1,6 @@
 from typing import List
 import httpx
-from backend.app.services.providers.base import BaseLLMProvider
+from app.services.providers.base import BaseLLMProvider
 
 class GeminiProvider(BaseLLMProvider):
     def __init__(self, api_key: str, base_url: str = "", model: str = ""):

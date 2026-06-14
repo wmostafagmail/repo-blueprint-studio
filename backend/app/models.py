@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.sql import func
-from backend.app.database import Base
+from app.database import Base
 
 class Setting(Base):
     __tablename__ = "settings"
@@ -19,7 +19,7 @@ class Setting(Base):
     output_dir = Column(String(255), default="")
     keep_cloned_repos = Column(Boolean, default=False)
     api_keys_json = Column(Text, default="{}")
-    analysis_strategy = Column(String(50), default="direct")
+    analysis_strategy = Column(String(50), default="hierarchical")
     map_batch_size = Column(Integer, default=5)
     generate_chunk_size = Column(Integer, default=5)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

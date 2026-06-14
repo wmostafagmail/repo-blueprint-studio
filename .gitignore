@@ -14,6 +14,9 @@ env/
 
 # Node / Frontend
 node_modules/
+macos-app/node_modules/
+macos-app/dist/
+macos-app/release/
 frontend/dist/
 frontend/build/
 .next/

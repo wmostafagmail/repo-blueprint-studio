@@ -1,0 +1,32 @@
+{
+  "name": "repo-blueprint-studio-macos",
+  "private": true,
+  "version": "1.0.0",
+  "description": "macOS desktop shell for Repo Blueprint Studio using the shared web frontend and backend.",
+  "main": "src/main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "build:web": "npm --prefix ../frontend run build",
+    "package": "npm run build:web && electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.automata.repoblueprintstudio",
+    "productName": "Repo Blueprint Studio",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ]
+  }
+}

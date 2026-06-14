@@ -100,10 +100,26 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
     try {
       const newJob = await api.createJob({
         github_url: job.repo_url,
+        provider_override: job.provider,
+        model_override: job.model,
       });
       onNavigateToJob(newJob.id);
     } catch (err: any) {
       alert(`Failed to retry: ${err.message}`);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!job) return;
+    try {
+      const newJob = await api.createJob({
+        github_url: job.repo_url,
+        provider_override: job.provider,
+        model_override: job.model,
+      });
+      onNavigateToJob(newJob.id);
+    } catch (err: any) {
+      alert(`Failed to resume: ${err.message}`);
     }
   };
 
@@ -159,6 +175,7 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
         onCancel={handleCancel}
         onPreview={fetchJobData}
         onRetry={handleRetry}
+        onResume={handleResume}
       />
 
       {/* Terminal logs console */}
