@@ -20,16 +20,16 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs, onRefresh, isLoading
   }, [logs, autoScroll, isOpen]);
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden shadow-sm bg-slate-900 text-slate-100 mt-6">
+    <div className="glass-dark mt-6 overflow-hidden rounded-[28px] text-slate-100">
       {/* Header */}
       <div 
-        className="flex items-center justify-between px-4 py-3 bg-slate-850 border-b border-slate-800 cursor-pointer"
+        className="flex cursor-pointer items-center justify-between border-b border-slate-700/70 bg-white/5 px-4 py-3"
         onClick={() => setIsOpen(!isOpen)}
       >
         <div className="flex items-center space-x-2">
           <Terminal className="h-4 w-4 text-indigo-400" />
           <span className="font-semibold text-sm">Execution Logs</span>
-          <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">
+            <span className="rounded-full border border-slate-700 bg-slate-800/80 px-2 py-0.5 font-mono text-xs text-slate-400">
             {logs.length} entries
           </span>
         </div>
@@ -56,8 +56,8 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs, onRefresh, isLoading
 
       {/* Body */}
       {isOpen && (
-        <div className="p-4 bg-slate-950 font-mono text-xs">
-          <div className="flex items-center justify-between mb-2 text-slate-400 border-b border-slate-800 pb-2">
+        <div className="bg-slate-950/70 p-4 font-mono text-xs">
+          <div className="mb-2 flex items-center justify-between border-b border-slate-800 pb-2 text-slate-400">
             <label className="flex items-center space-x-2 cursor-pointer">
               <input 
                 type="checkbox" 
@@ -71,7 +71,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs, onRefresh, isLoading
 
           <div 
             ref={containerRef}
-            className="h-64 overflow-y-auto space-y-1.5 pr-2 scrollbar-thin scrollbar-thumb-slate-850"
+            className="h-72 space-y-1.5 overflow-y-auto pr-2"
           >
             {logs.length === 0 ? (
               <div className="text-slate-500 italic py-8 text-center">No logs generated yet...</div>

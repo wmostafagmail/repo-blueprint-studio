@@ -159,11 +159,10 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
   }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Navigation breadcrumb */}
+    <div className="mx-auto max-w-6xl space-y-6">
       <button
         onClick={onBack}
-        className="flex items-center space-x-1.5 text-slate-450 hover:text-slate-805 text-sm font-semibold transition-colors"
+        className="secondary-button text-sm"
       >
         <ChevronLeft className="h-4.5 w-4.5" />
         <span>Back</span>
@@ -188,25 +187,25 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
       {/* Blueprint Live Preview markdown component */}
       {job.status === 'completed' && (
         <>
-          <div className="flex space-x-2 mb-4">
+          <div className="glass-panel-soft mb-4 flex flex-wrap gap-2 rounded-[24px] p-2">
             <button
               onClick={() => setActiveTab('spec')}
               disabled={job?.status !== 'completed'}
-              className={`px-3 py-1 rounded ${activeTab === 'spec' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700'}`}
+              className={`pill-tab ${activeTab === 'spec' ? 'bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.26)]' : 'text-slate-700 hover:bg-white/70'}`}
             >
               Blueprint
             </button>
             <button
               onClick={() => setActiveTab('architecture')}
               disabled={job?.status !== 'completed'}
-              className={`px-3 py-1 rounded ${activeTab === 'architecture' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700'}`}
+              className={`pill-tab ${activeTab === 'architecture' ? 'bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.26)]' : 'text-slate-700 hover:bg-white/70'}`}
             >
               Architecture
             </button>
             <button
               onClick={() => setActiveTab('treemap')}
               disabled={job?.status !== 'completed'}
-              className={`px-3 py-1 rounded ${activeTab === 'treemap' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700'}`}
+              className={`pill-tab ${activeTab === 'treemap' ? 'bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.26)]' : 'text-slate-700 hover:bg-white/70'}`}
             >
               Treemap
             </button>
@@ -214,24 +213,23 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
           {activeTab === 'spec' && markdown && <MarkdownPreview markdown={markdown} />}
           {activeTab === 'architecture' && (
             <div className="space-y-3">
-              {/* Sub-tab toggle */}
-              <div className="flex space-x-1 bg-slate-900/60 border border-slate-800 rounded-lg p-1 w-fit">
+              <div className="glass-dark flex w-fit space-x-1 rounded-2xl p-1.5">
                 <button
                   onClick={() => setArchSubTab('explorer')}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                  className={`pill-tab text-xs ${
                     archSubTab === 'explorer'
-                      ? 'bg-indigo-600 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.26)]'
+                      : 'text-slate-400 hover:bg-white/10 hover:text-slate-200'
                   }`}
                 >
                   🏗️ Explorer
                 </button>
                 <button
                   onClick={() => setArchSubTab('diagrams')}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                  className={`pill-tab text-xs ${
                     archSubTab === 'diagrams'
-                      ? 'bg-indigo-600 text-white shadow'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.26)]'
+                      : 'text-slate-400 hover:bg-white/10 hover:text-slate-200'
                   }`}
                 >
                   📊 Diagrams

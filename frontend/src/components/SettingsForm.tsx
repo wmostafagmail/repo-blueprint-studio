@@ -5,6 +5,8 @@ import { api, ModelLimit, Setting } from '../api';
 const isLocalProvider = (provider: string): boolean => provider === 'ollama' || provider === 'lmstudio';
 
 const normalizeModelKey = (modelName: string): string => modelName.trim().toLowerCase();
+const DIRECT_MODE_MIN_OUTPUT_TOKENS = 6000;
+const DIRECT_MODE_MIN_CHUNK_SIZE = 50000;
 
 const getModelLimits = (modelName: string): ModelLimit => {
   const model = modelName.toLowerCase();
@@ -58,6 +60,13 @@ const resolveModelLimits = (modelName: string, knownLimits: Record<string, Model
 
   return getModelLimits(modelName);
 };
+
+const isModelTooSmallForDirectMode = (limits: ModelLimit): boolean =>
+  limits.maxOutputTokens < DIRECT_MODE_MIN_OUTPUT_TOKENS ||
+  limits.chunkSize < DIRECT_MODE_MIN_CHUNK_SIZE;
+
+const getRecommendedAnalysisStrategy = (limits: ModelLimit): 'direct' | 'hierarchical' =>
+  isModelTooSmallForDirectMode(limits) ? 'hierarchical' : 'direct';
 
 export const SettingsForm: React.FC = () => {
   const [settings, setSettings] = useState<Setting>({
@@ -184,6 +193,7 @@ export const SettingsForm: React.FC = () => {
         ...current,
         max_output_tokens: limits.maxOutputTokens,
         chunk_size: limits.chunkSize,
+        analysis_strategy: getRecommendedAnalysisStrategy(limits),
       };
     });
   }, [settings.model, settings.provider, settings.max_output_tokens, settings.chunk_size, models, modelsLimits]);
@@ -229,6 +239,7 @@ export const SettingsForm: React.FC = () => {
       const limits = resolveModelLimits(value, modelsLimits);
       updatedSettings.max_output_tokens = limits.maxOutputTokens;
       updatedSettings.chunk_size = limits.chunkSize;
+      updatedSettings.analysis_strategy = getRecommendedAnalysisStrategy(limits);
     }
 
     setSettings(updatedSettings);
@@ -295,17 +306,19 @@ export const SettingsForm: React.FC = () => {
   return (
     <form onSubmit={handleSave} className="space-y-6">
       {/* Provider Details Card */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-        <h3 className="text-base font-bold text-slate-800 mb-4">LLM API Provider Settings</h3>
+      <div className="section-card">
+        <h3 className="mb-4 text-base font-bold text-slate-900">LLM API Provider Settings</h3>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Provider</label>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
+          <div className="flex h-full flex-col">
+            <div className="mb-2 flex min-h-[28px] items-center">
+              <label className="field-label mb-0">Provider</label>
+            </div>
             <select
               name="provider"
               value={settings.provider}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             >
               <option value="mock">Mock LLM Provider (No API keys needed)</option>
               <option value="openai">OpenAI / GPT</option>
@@ -317,14 +330,14 @@ export const SettingsForm: React.FC = () => {
             </select>
           </div>
 
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Model Name</label>
+          <div className="flex h-full flex-col">
+            <div className="mb-2 flex min-h-[28px] items-center justify-between gap-3">
+              <label className="field-label mb-0">Model Name</label>
               <button
                 type="button"
                 onClick={() => fetchModelsList()}
                 disabled={loadingModels}
-                className="text-[10px] text-indigo-650 hover:text-indigo-800 font-semibold flex items-center space-x-1 disabled:opacity-50"
+                className="shrink-0 text-[11px] font-semibold text-blue-700 transition-colors hover:text-blue-900 disabled:opacity-50"
                 title="Fetch models list from provider"
               >
                 <RefreshCw className={`h-3 w-3 ${loadingModels ? 'animate-spin' : ''}`} />
@@ -337,7 +350,7 @@ export const SettingsForm: React.FC = () => {
                 name="model"
                 value={settings.model}
                 onChange={handleChange}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+                className="input-surface"
               >
                 <option value="">-- Select a Model --</option>
                 {models.map((m) => (
@@ -352,7 +365,7 @@ export const SettingsForm: React.FC = () => {
                   value={settings.model}
                   onChange={handleChange}
                   placeholder="e.g. gpt-4o, gemini-1.5-flash, llama3"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+                  className="input-surface"
                 />
                 {loadingModels && (
                   <div className="absolute right-3 top-3">
@@ -363,13 +376,13 @@ export const SettingsForm: React.FC = () => {
             )}
             
             {modelsError && settings.provider !== 'mock' && (
-              <p className="text-[10px] text-slate-400 mt-1 italic">
+              <p className="mt-1 text-[11px] italic text-slate-500">
                 Note: Could not list models ({modelsError}). Enter name manually.
               </p>
             )}
             {showLocalCapacityHint && selectedModelLimits && (
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-                <div className="font-semibold text-slate-700">
+              <div className="glass-panel-soft mt-3 rounded-[22px] px-4 py-3 text-[11px] text-slate-600">
+                <div className="font-semibold text-slate-800">
                   {selectedModelLimits.source === 'detected' ? 'Detected local capacity' : 'Fallback local capacity'}
                 </div>
                 <div>
@@ -379,7 +392,7 @@ export const SettingsForm: React.FC = () => {
                   <div>{selectedModelLimits.notes}</div>
                 )}
                 {usesSavedOverride && (
-                  <div className="text-indigo-700">
+                  <div className="text-blue-700">
                     Current saved settings differ from the recommendation, so you are using a manual override.
                   </div>
                 )}
@@ -394,21 +407,21 @@ export const SettingsForm: React.FC = () => {
 
           {settings.provider !== 'mock' && settings.provider !== 'ollama' && (
             <div className="md:col-span-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">API Key</label>
+              <label className="field-label">API Key</label>
               <input
                 type="password"
                 name="api_key"
                 value={settings.api_key}
                 onChange={handleChange}
                 placeholder={settings.provider === 'lmstudio' ? 'Optional (default is lm-studio)' : 'Enter your provider API Key'}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+                className="input-surface"
               />
             </div>
           )}
 
           {settings.provider !== 'mock' && settings.provider !== 'gemini' && (
             <div className="md:col-span-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Base URL</label>
+              <label className="field-label">Base URL</label>
               <input
                 type="text"
                 name="base_url"
@@ -421,7 +434,7 @@ export const SettingsForm: React.FC = () => {
                   settings.provider === 'openai' ? 'https://api.openai.com/v1 (Optional)' :
                   'https://api.your-endpoint.com/v1'
                 }
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+                className="input-surface"
               />
             </div>
           )}
@@ -429,12 +442,12 @@ export const SettingsForm: React.FC = () => {
 
         {/* Connection Test Panel */}
         {settings.provider !== 'mock' && (
-          <div className="mt-6 border-t border-slate-100 pt-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="mt-6 flex flex-col items-start justify-between gap-4 border-t border-white/50 pt-4 md:flex-row md:items-center">
             <button
               type="button"
               onClick={handleTestConnection}
               disabled={testing}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg text-xs transition-colors flex items-center space-x-2 border border-slate-200 disabled:opacity-50"
+              className="secondary-button text-xs disabled:opacity-50"
             >
               {testing ? (
                 <>
@@ -447,10 +460,10 @@ export const SettingsForm: React.FC = () => {
             </button>
 
             {testStatus && (
-              <div className={`flex items-center space-x-2 text-xs py-1 px-3 rounded-lg border ${
+              <div className={`glass-panel-soft flex items-center space-x-2 rounded-2xl px-3 py-2 text-xs ${
                 testStatus.type === 'success' 
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-100' 
-                  : 'bg-rose-50 text-rose-800 border-rose-100'
+                  ? 'text-emerald-800' 
+                  : 'text-rose-800'
               }`}>
                 {testStatus.type === 'success' ? (
                   <CheckCircle className="h-4 w-4 text-emerald-600 flex-shrink-0" />
@@ -465,25 +478,25 @@ export const SettingsForm: React.FC = () => {
       </div>
 
       {/* Analysis Strategy Card */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-        <h3 className="text-base font-bold text-slate-800 mb-2">Analysis Strategy</h3>
-        <p className="text-xs text-slate-500 mb-4">
+      <div className="section-card">
+        <h3 className="mb-2 text-base font-bold text-slate-900">Analysis Strategy</h3>
+        <p className="mb-4 text-sm leading-6 text-slate-600">
           Quality-first staged analysis is now the default pipeline for every model. Hierarchical Map-Reduce is the canonical path because it keeps output quality consistent across cloud and local models and emits richer execution logs.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Strategy</label>
+          <div className="md:col-span-2">
+            <label className="field-label">Strategy</label>
             <select
               name="analysis_strategy"
               value={settings.analysis_strategy || 'hierarchical'}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             >
               <option value="hierarchical">Hierarchical (Quality-First Default)</option>
               <option value="direct">Direct (Legacy / Fast Mock Testing)</option>
             </select>
-            <p className="mt-1 text-[11px] text-slate-500">
+            <p className="mt-2 text-[12px] leading-6 text-slate-500">
               Even if `Direct` is selected, the backend may promote the run to the quality-first staged pipeline to preserve blueprint completeness.
             </p>
           </div>
@@ -491,7 +504,7 @@ export const SettingsForm: React.FC = () => {
           {settings.analysis_strategy === 'hierarchical' && (
             <>
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Parallel Mapping Workers</label>
+                <label className="field-label">Parallel Mapping Workers</label>
                 <input
                   type="number"
                   name="map_batch_size"
@@ -499,13 +512,13 @@ export const SettingsForm: React.FC = () => {
                   max="20"
                   value={settings.map_batch_size || 5}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+                  className="input-surface"
                   title="Number of files to map in parallel. Keep lower for local models (e.g. 2-5)."
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Generation Chunk Size</label>
+                <label className="field-label">Generation Chunk Size</label>
                 <input
                   type="number"
                   name="generate_chunk_size"
@@ -513,7 +526,7 @@ export const SettingsForm: React.FC = () => {
                   max="10"
                   value={settings.generate_chunk_size || 5}
                   onChange={handleChange}
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+                  className="input-surface"
                   title="Number of sections to generate in a single incremental LLM request."
                 />
               </div>
@@ -523,34 +536,34 @@ export const SettingsForm: React.FC = () => {
       </div>
 
       {/* Extraction & Size Settings */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-        <h3 className="text-base font-bold text-slate-800 mb-4">Pipeline limits & Extraction settings</h3>
+      <div className="section-card">
+        <h3 className="mb-4 text-base font-bold text-slate-900">Pipeline limits & Extraction settings</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Max Repo Size (MB)</label>
+            <label className="field-label">Max Repo Size (MB)</label>
             <input
               type="number"
               name="max_repo_size_mb"
               value={settings.max_repo_size_mb}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Max File Size (KB)</label>
+            <label className="field-label">Max File Size (KB)</label>
             <input
               type="number"
               name="max_file_size_kb"
               value={settings.max_file_size_kb}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">LLM Temperature</label>
+            <label className="field-label">LLM Temperature</label>
             <input
               type="number"
               name="temperature"
@@ -559,24 +572,24 @@ export const SettingsForm: React.FC = () => {
               step="0.1"
               value={settings.temperature}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             />
           </div>
 
           <div className="md:col-span-3">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Output Directory</label>
+            <label className="field-label">Output Directory</label>
             <input
               type="text"
               name="output_dir"
               value={settings.output_dir}
               onChange={handleChange}
               placeholder="Path to save blueprint files"
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Max Output Tokens</label>
+            <label className="field-label">Max Output Tokens</label>
             <input
               type="number"
               name="max_output_tokens"
@@ -584,17 +597,17 @@ export const SettingsForm: React.FC = () => {
               max="32768"
               value={settings.max_output_tokens}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             />
             {showLocalCapacityHint && selectedModelLimits && (
-              <p className="mt-1 text-[11px] text-slate-500">
+              <p className="mt-2 text-[11px] leading-6 text-slate-500">
                 Recommended for this local model: {selectedModelLimits.maxOutputTokens.toLocaleString()} tokens ({selectedModelLimits.source === 'detected' ? 'runtime-detected' : 'fallback estimate'}).
               </p>
             )}
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Context Window / Chunk Size (chars)</label>
+            <label className="field-label">Context Window / Chunk Size (chars)</label>
             <input
               type="number"
               name="chunk_size"
@@ -602,32 +615,32 @@ export const SettingsForm: React.FC = () => {
               max="1000000"
               value={settings.chunk_size}
               onChange={handleChange}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
               title="Limits total repository files content character size sent to the model to avoid exceeding the context limit."
             />
             {showLocalCapacityHint && selectedModelLimits && (
-              <p className="mt-1 text-[11px] text-slate-500">
+              <p className="mt-2 text-[11px] leading-6 text-slate-500">
                 Local capacity depends on the loaded runtime model and server configuration. For bigger jobs, use hierarchical mode when this recommendation stays small.
               </p>
             )}
           </div>
         </div>
 
-        <div className="mt-6 border-t border-slate-100 pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="mt-6 grid grid-cols-1 gap-4 border-t border-white/50 pt-4 md:grid-cols-2">
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Default GitHub Token (Optional)</label>
+            <label className="field-label">Default GitHub Token (Optional)</label>
             <input
               type="password"
               name="github_token"
               value={settings.github_token}
               onChange={handleChange}
               placeholder="Use for private repositories"
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-800 focus:border-indigo-500 focus:bg-white outline-none"
+              className="input-surface"
             />
           </div>
 
-          <div className="flex items-center mt-6">
-            <label className="flex items-center space-x-3 cursor-pointer">
+          <div className="mt-3 flex items-center md:mt-6">
+            <label className="glass-panel-soft flex w-full items-center space-x-3 rounded-[24px] p-4 cursor-pointer">
               <input
                 type="checkbox"
                 name="keep_cloned_repos"
@@ -637,15 +650,15 @@ export const SettingsForm: React.FC = () => {
               />
               <div>
                 <span className="block text-sm font-semibold text-slate-700">Keep cloned workspace repositories</span>
-                <span className="block text-xs text-slate-400">If unchecked, repo clones are deleted immediately after blueprints are written.</span>
-              </div>
-            </label>
+                    <span className="block text-xs text-slate-500">If unchecked, repo clones are deleted immediately after blueprints are written.</span>
+                  </div>
+                </label>
           </div>
         </div>
       </div>
 
       {/* Save Status & Action */}
-      <div className="flex items-center justify-between border-t border-slate-100 pt-6">
+      <div className="glass-panel flex flex-col items-start justify-between gap-4 rounded-[26px] px-5 py-4 sm:flex-row sm:items-center">
         <div>
           {saveStatus && (
             <div className={`text-sm font-medium ${saveStatus.type === 'success' ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -657,7 +670,7 @@ export const SettingsForm: React.FC = () => {
         <button
           type="submit"
           disabled={saving}
-          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm transition-colors flex items-center space-x-2 shadow-sm disabled:opacity-50"
+          className="primary-button w-full sm:w-auto disabled:opacity-50"
         >
           {saving ? (
             <RefreshCw className="h-4 w-4 animate-spin" />

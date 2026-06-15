@@ -6,11 +6,11 @@ interface StatusBadgeProps {
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
   const styles = {
-    queued: 'bg-slate-100 text-slate-700 border-slate-200',
-    running: 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse',
-    completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    failed: 'bg-rose-50 text-rose-700 border-rose-200',
-    cancelled: 'bg-amber-50 text-amber-700 border-amber-200',
+    queued: 'bg-white/70 text-slate-700 border-white/80',
+    running: 'bg-blue-50/90 text-blue-700 border-blue-200/70',
+    completed: 'bg-emerald-50/90 text-emerald-700 border-emerald-200/70',
+    failed: 'bg-rose-50/90 text-rose-700 border-rose-200/70',
+    cancelled: 'bg-amber-50/90 text-amber-700 border-amber-200/70',
   };
 
   const label = {
@@ -22,7 +22,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
   };
 
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status] || styles.queued}`}>
+    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold shadow-[0_8px_20px_rgba(148,163,184,0.16)] ${styles[status] || styles.queued} ${status === 'running' ? 'animate-pulse' : ''}`}>
       {label[status] || status}
     </span>
   );

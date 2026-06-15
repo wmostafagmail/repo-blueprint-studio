@@ -88,6 +88,21 @@ class AnalysisService:
         finally:
             db.close()
 
+    def get_available_output_path(self, base_name: str) -> Path:
+        """Return a stable output path without job IDs, adding a numeric suffix only on collision."""
+        candidate = OUTPUTS_DIR / base_name
+        if not candidate.exists():
+            return candidate
+
+        stem = Path(base_name).stem
+        suffix = Path(base_name).suffix
+        counter = 2
+        while True:
+            candidate = OUTPUTS_DIR / f"{stem}_{counter}{suffix}"
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
     def run_analysis(self, repo_url: str, github_token: str = None, provider_override: str = None, model_override: str = None):
         """Executes the full repository analysis pipeline."""
         workspace_path = None
@@ -236,7 +251,7 @@ class AnalysisService:
                 repo_output_path.write_text(blueprint_content, encoding="utf-8")
                 
                 # Copy to data/outputs
-                local_output_path = OUTPUTS_DIR / f"{self.job_id}_{output_md_name}"
+                local_output_path = self.get_available_output_path(output_md_name)
                 shutil.copy(str(repo_output_path), str(local_output_path))
                 
                 self.update_job(100, "Analysis complete", "completed", output_path=str(local_output_path))
@@ -531,7 +546,7 @@ class AnalysisService:
             repo_output_path.write_text(blueprint_content, encoding="utf-8")
             
             # Copy to local outputs folder
-            local_output_path = OUTPUTS_DIR / f"{self.job_id}_{output_md_name}"
+            local_output_path = self.get_available_output_path(output_md_name)
             shutil.copy(str(repo_output_path), str(local_output_path))
             
             # Copy inventory JSON to local outputs folder
