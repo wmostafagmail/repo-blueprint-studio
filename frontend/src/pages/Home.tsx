@@ -35,7 +35,7 @@ export const Home: React.FC<HomeProps> = ({ onNavigateToJob, onNavigateToHistory
     
     const cleanUrl = url.trim();
     if (!cleanUrl) {
-      setError('Please enter a GitHub repository URL');
+      setError('Add a GitHub repository URL to start the analysis.');
       return;
     }
 
@@ -151,7 +151,7 @@ export const Home: React.FC<HomeProps> = ({ onNavigateToJob, onNavigateToHistory
               </div>
             </div>
 
-            <ErrorPanel error={error} title="Failed to launch analysis" />
+            <ErrorPanel error={error} title="Analysis couldn’t start yet" />
 
             <button
               type="submit"
