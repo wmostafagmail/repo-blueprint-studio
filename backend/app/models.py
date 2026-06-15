@@ -29,6 +29,10 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id = Column(String(36), primary_key=True, index=True)
+    parent_job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True)
+    job_kind = Column(String(30), default="analysis")  # analysis, stage, section, compile
+    stage_name = Column(String(120), nullable=True)
+    sort_index = Column(Integer, default=0)
     repo_url = Column(String(255), nullable=False)
     repo_name = Column(String(100), nullable=False)
     status = Column(String(20), default="queued")  # queued, running, completed, failed, cancelled

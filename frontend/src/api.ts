@@ -19,6 +19,10 @@ export interface Setting {
 
 export interface Job {
   id: string;
+  parent_job_id?: string | null;
+  job_kind?: string | null;
+  stage_name?: string | null;
+  sort_index?: number | null;
   repo_url: string;
   repo_name: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -63,6 +67,16 @@ export interface ModelLimit {
 export interface BlueprintPreviewResponse {
   repo_name: string;
   markdown: string;
+}
+
+export interface JobArtifact {
+  path: string;
+  label: string;
+  category: string;
+}
+
+export interface JobArtifactContent extends JobArtifact {
+  content: string;
 }
 
 declare global {
@@ -138,6 +152,8 @@ export const api = {
     github_token?: string;
     provider_override?: string;
     model_override?: string;
+    source_job_id?: string;
+    resume_from_stage?: string;
   }) => request<Job>('/jobs', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -148,7 +164,11 @@ export const api = {
   }),
   
   getJobLogs: (jobId: string) => request<JobLog[]>(`/jobs/${jobId}/logs`),
+  getJobChildren: (jobId: string) => request<Job[]>(`/jobs/${jobId}/children`),
   
   getBlueprintPreview: (jobId: string) => request<BlueprintPreviewResponse>(`/jobs/${jobId}/preview`),
   getJobInventory: (jobId: string) => request<any>(`/jobs/${jobId}/inventory`),
+  getJobArtifacts: (jobId: string) => request<JobArtifact[]>(`/jobs/${jobId}/artifacts`),
+  getJobArtifactContent: (jobId: string, path: string) =>
+    request<JobArtifactContent>(`/jobs/${jobId}/artifacts/content?path=${encodeURIComponent(path)}`),
 };

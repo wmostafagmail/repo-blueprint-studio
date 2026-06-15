@@ -53,6 +53,20 @@ def init_db():
         db_mig.commit()
     except Exception:
         pass
+    try:
+        db_mig.execute(text("ALTER TABLE jobs ADD COLUMN parent_job_id VARCHAR(36) NULL"))
+        db_mig.execute(text("ALTER TABLE jobs ADD COLUMN job_kind VARCHAR(30) DEFAULT 'analysis'"))
+        db_mig.execute(text("ALTER TABLE jobs ADD COLUMN stage_name VARCHAR(120) NULL"))
+        db_mig.execute(text("ALTER TABLE jobs ADD COLUMN sort_index INTEGER DEFAULT 0"))
+        db_mig.commit()
+    except Exception:
+        pass
+    try:
+        db_mig.execute(text("UPDATE jobs SET job_kind = 'analysis' WHERE job_kind IS NULL"))
+        db_mig.execute(text("UPDATE jobs SET sort_index = 0 WHERE sort_index IS NULL"))
+        db_mig.commit()
+    except Exception:
+        pass
     finally:
         db_mig.close()
     

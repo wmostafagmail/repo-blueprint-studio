@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -7,7 +8,7 @@ from typing import List
 
 from app.database import get_db
 from app.models import Job, JobLog, Setting
-from app.schemas import JobCreate, JobResponse, JobLogResponse
+from app.schemas import JobArtifactContentResponse, JobArtifactResponse, JobCreate, JobResponse, JobLogResponse
 from app.utils.url_validation import is_safe_github_url
 from app.utils.repo_name import repo_name_from_url
 from app.services.analysis_service import AnalysisService
@@ -19,14 +20,23 @@ def run_analysis_task(
     repo_url: str, 
     github_token: str = None, 
     provider_override: str = None, 
-    model_override: str = None
+    model_override: str = None,
+    source_job_id: str = None,
+    resume_from_stage: str = None,
 ):
     """Background task executed by FastAPI to run the analysis."""
     from app.database import SessionLocal
     db = SessionLocal()
     try:
         service = AnalysisService(db, job_id)
-        service.run_analysis(repo_url, github_token, provider_override, model_override)
+        service.run_analysis(
+            repo_url,
+            github_token,
+            provider_override,
+            model_override,
+            source_job_id=source_job_id,
+            resume_from_stage=resume_from_stage,
+        )
     finally:
         db.close()
 
@@ -35,6 +45,16 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks, db: Sessio
     url = payload.github_url.strip()
     if not is_safe_github_url(url):
         raise HTTPException(status_code=400, detail="Invalid or unsafe GitHub URL")
+
+    source_job = None
+    if payload.resume_from_stage:
+        if not payload.source_job_id:
+            raise HTTPException(status_code=400, detail="source_job_id is required when resume_from_stage is provided")
+        source_job = db.query(Job).filter(Job.id == payload.source_job_id).first()
+        if not source_job:
+            raise HTTPException(status_code=404, detail="Source job not found")
+        if payload.resume_from_stage != "analysis_state":
+            raise HTTPException(status_code=400, detail="Unsupported resume stage")
 
     # Generate job details
     job_id = str(uuid.uuid4())
@@ -48,11 +68,16 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks, db: Sessio
     # Save job record
     new_job = Job(
         id=job_id,
+        job_kind="analysis",
         repo_url=url,
         repo_name=repo_name,
         status="queued",
         progress=0,
-        current_step="Queued in background",
+        current_step=(
+            "Queued to retry from Structured Analysis State"
+            if payload.resume_from_stage == "analysis_state"
+            else "Queued in background"
+        ),
         provider=provider_name,
         model=model_name
     )
@@ -67,7 +92,9 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks, db: Sessio
         repo_url=url,
         github_token=payload.github_token,
         provider_override=payload.provider_override,
-        model_override=payload.model_override
+        model_override=payload.model_override,
+        source_job_id=payload.source_job_id,
+        resume_from_stage=payload.resume_from_stage,
     )
 
     response = JobResponse.model_validate(new_job)
@@ -76,7 +103,7 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks, db: Sessio
 
 @router.get("/jobs", response_model=List[JobResponse])
 def get_jobs(db: Session = Depends(get_db)):
-    jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+    jobs = db.query(Job).filter(Job.parent_job_id.is_(None)).order_by(Job.created_at.desc()).all()
     response_list = []
     for job in jobs:
         resp = JobResponse.model_validate(job)
@@ -103,6 +130,25 @@ def get_job_logs(job_id: str, db: Session = Depends(get_db)):
         
     logs = db.query(JobLog).filter(JobLog.job_id == job_id).order_by(JobLog.created_at.asc()).all()
     return logs
+
+@router.get("/jobs/{job_id}/children", response_model=List[JobResponse])
+def get_job_children(job_id: str, db: Session = Depends(get_db)):
+    parent = db.query(Job).filter(Job.id == job_id).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    children = (
+        db.query(Job)
+        .filter(Job.parent_job_id == job_id)
+        .order_by(Job.sort_index.asc(), Job.created_at.asc())
+        .all()
+    )
+    response_list = []
+    for child in children:
+        resp = JobResponse.model_validate(child)
+        resp.download_url = f"/api/jobs/{child.id}/download"
+        response_list.append(resp)
+    return response_list
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, db: Session = Depends(get_db)):
@@ -214,3 +260,104 @@ def get_job_inventory(job_id: str, db: Session = Depends(get_db)):
         return json.loads(content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read inventory content: {e}")
+
+
+def build_artifact_label(relative_path: str) -> str:
+    parts = Path(relative_path).parts
+    if not parts:
+        return relative_path
+    if parts[0] == "evidence" and parts[-1] == "extraction_report.md":
+        return "Evidence Extraction Report"
+    if parts[0] == "sections" and len(parts) >= 2:
+        return parts[-1].replace(".md", "").replace("_", " ").title()
+    if parts[-1] == "analysis_state.md":
+        return "Structured Analysis State"
+    if parts[-1] == "analysis_state.json":
+        return "Structured Analysis State JSON"
+    if parts[-1] == "compiled_blueprint.md":
+        return "Compiled Blueprint"
+    return parts[-1]
+
+
+def build_artifact_category(relative_path: str) -> str:
+    parts = Path(relative_path).parts
+    if not parts:
+        return "artifact"
+    if parts[0] == "evidence":
+        return "evidence"
+    if parts[0] == "sections":
+        return "section"
+    if parts[-1].startswith("analysis_state"):
+        return "analysis"
+    if parts[-1] == "compiled_blueprint.md":
+        return "compiled"
+    return "artifact"
+
+
+def resolve_workspace_artifact(job: Job, relative_path: str) -> Path:
+    if not job.workspace_path:
+        raise HTTPException(status_code=404, detail="Job workspace path is not available")
+
+    base_path = Path(job.workspace_path).resolve()
+    candidate = (base_path / unquote(relative_path)).resolve()
+    if base_path != candidate and base_path not in candidate.parents:
+        raise HTTPException(status_code=403, detail="Forbidden artifact path access attempt")
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return candidate
+
+
+@router.get("/jobs/{job_id}/artifacts", response_model=List[JobArtifactResponse])
+def list_job_artifacts(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not job.workspace_path:
+        return []
+
+    workspace = Path(job.workspace_path)
+    artifact_rel_paths = []
+    for relative_path in [
+        "evidence/extraction_report.md",
+        "analysis/analysis_state.md",
+        "analysis/analysis_state.json",
+        "sections/01_foundation.md",
+        "sections/02_functional_architecture.md",
+        "sections/03_data_api_ui_security.md",
+        "sections/04_ops_quality_delivery.md",
+        "sections/compiled_blueprint.md",
+    ]:
+        artifact_path = workspace / relative_path
+        if artifact_path.exists() and artifact_path.is_file():
+            artifact_rel_paths.append(relative_path)
+
+    return [
+        JobArtifactResponse(
+            path=relative_path,
+            label=build_artifact_label(relative_path),
+            category=build_artifact_category(relative_path),
+        )
+        for relative_path in artifact_rel_paths
+    ]
+
+
+@router.get("/jobs/{job_id}/artifacts/content", response_model=JobArtifactContentResponse)
+def get_job_artifact_content(job_id: str, path: str, db: Session = Depends(get_db)):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    artifact_path = resolve_workspace_artifact(job, path)
+    try:
+        content = artifact_path.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read artifact content: {e}")
+
+    relative_path = str(artifact_path.relative_to(Path(job.workspace_path)))
+    return JobArtifactContentResponse(
+        path=relative_path,
+        label=build_artifact_label(relative_path),
+        category=build_artifact_category(relative_path),
+        content=content,
+    )

@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, RefreshCw, ChevronLeft } from 'lucide-react';
-import { api, Job, JobLog } from '../api';
+import { api, Job, JobArtifact, JobLog } from '../api';
 import { JobProgressCard } from '../components/JobProgressCard';
 import { LogViewer } from '../components/LogViewer';
 import { MarkdownPreview } from '../components/MarkdownPreview';
 import { MermaidRenderer } from '../components/MermaidRenderer';
 import { CodebaseTreemap } from '../components/CodebaseTreemap';
 import { ArchitectureExplorer } from '../components/ArchitectureExplorer';
+import { StatusBadge } from '../components/StatusBadge';
 
 interface JobDetailsProps {
   jobId: string;
@@ -17,6 +18,10 @@ interface JobDetailsProps {
 export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigateToJob }) => {
   const [job, setJob] = useState<Job | null>(null);
   const [logs, setLogs] = useState<JobLog[]>([]);
+  const [childJobs, setChildJobs] = useState<Job[]>([]);
+  const [artifacts, setArtifacts] = useState<JobArtifact[]>([]);
+  const [selectedArtifactPath, setSelectedArtifactPath] = useState<string | null>(null);
+  const [selectedArtifactContent, setSelectedArtifactContent] = useState<string>('');
   const [markdown, setMarkdown] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -33,6 +38,8 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
       
       const logData = await api.getJobLogs(jobId);
       setLogs(logData);
+      const childJobData = await api.getJobChildren(jobId);
+      setChildJobs(childJobData);
       
       if (jobData.status === 'completed' && !markdown) {
         const preview = await api.getBlueprintPreview(jobId);
@@ -40,6 +47,14 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
         // Fetch inventory data for treemap view
         const inventory = await api.getJobInventory(jobId);
         setInventoryData(inventory);
+        const artifactData = await api.getJobArtifacts(jobId);
+        setArtifacts(artifactData);
+        if (artifactData.length > 0) {
+          const preferredArtifact = artifactData.find((artifact) => artifact.category === 'compiled') || artifactData[0];
+          setSelectedArtifactPath(preferredArtifact.path);
+          const artifactContent = await api.getJobArtifactContent(jobId, preferredArtifact.path);
+          setSelectedArtifactContent(artifactContent.content);
+        }
       }
       setError(null);
     } catch (err: any) {
@@ -63,12 +78,25 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
         
         const logData = await api.getJobLogs(jobId);
         setLogs(logData);
+        const childJobData = await api.getJobChildren(jobId);
+        setChildJobs(childJobData);
         
         if (jobData.status === 'completed') {
           const preview = await api.getBlueprintPreview(jobId);
           setMarkdown(preview.markdown);
           const inventory = await api.getJobInventory(jobId);
           setInventoryData(inventory);
+          const artifactData = await api.getJobArtifacts(jobId);
+          setArtifacts(artifactData);
+          if (!selectedArtifactPath && artifactData.length > 0) {
+            const preferredArtifact = artifactData.find((artifact) => artifact.category === 'compiled') || artifactData[0];
+            setSelectedArtifactPath(preferredArtifact.path);
+            const artifactContent = await api.getJobArtifactContent(jobId, preferredArtifact.path);
+            setSelectedArtifactContent(artifactContent.content);
+          } else if (selectedArtifactPath) {
+            const artifactContent = await api.getJobArtifactContent(jobId, selectedArtifactPath);
+            setSelectedArtifactContent(artifactContent.content);
+          }
           if (interval) clearInterval(interval);
         } else if (jobData.status === 'failed' || jobData.status === 'cancelled') {
           if (interval) clearInterval(interval);
@@ -123,6 +151,22 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
     }
   };
 
+  const handleStructuredAnalysisRetry = async () => {
+    if (!job) return;
+    try {
+      const newJob = await api.createJob({
+        github_url: job.repo_url,
+        provider_override: job.provider,
+        model_override: job.model,
+        source_job_id: job.id,
+        resume_from_stage: 'analysis_state',
+      });
+      onNavigateToJob(newJob.id);
+    } catch (err: any) {
+      alert(`Failed to retry from Structured Analysis State: ${err.message}`);
+    }
+  };
+
   const handleManualLogsRefresh = async () => {
     setLogsLoading(true);
     try {
@@ -130,6 +174,16 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
       setLogs(logData);
     } catch (err) {}
     setLogsLoading(false);
+  };
+
+  const handleSelectArtifact = async (artifactPath: string) => {
+    setSelectedArtifactPath(artifactPath);
+    try {
+      const artifact = await api.getJobArtifactContent(jobId, artifactPath);
+      setSelectedArtifactContent(artifact.content);
+    } catch (err) {
+      setSelectedArtifactContent('');
+    }
   };
 
   if (loading) {
@@ -177,6 +231,54 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
         onResume={handleResume}
       />
 
+      {childJobs.length > 0 && (
+        <div className="section-card">
+          <h3 className="mb-4 text-base font-bold text-slate-900">Pipeline Stages</h3>
+          <div className="space-y-3">
+            {childJobs.map((child) => (
+              <div key={child.id} className="glass-panel-soft rounded-[22px] px-4 py-4">
+                <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-bold text-slate-800">{child.stage_name || child.repo_name}</div>
+                    <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">{child.job_kind || 'stage'}</div>
+                  </div>
+                  <StatusBadge status={child.status} />
+                </div>
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                  <span className="truncate text-slate-600">{child.current_step}</span>
+                  <span className="font-mono font-semibold text-indigo-700">{child.progress}%</span>
+                </div>
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/80 shadow-[inset_0_2px_6px_rgba(148,163,184,0.2)]">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      child.status === 'completed'
+                        ? 'bg-emerald-500'
+                        : child.status === 'failed'
+                        ? 'bg-rose-500'
+                        : child.status === 'cancelled'
+                        ? 'bg-amber-500'
+                        : 'bg-indigo-600'
+                    }`}
+                    style={{ width: `${Math.max(0, Math.min(100, child.progress || 0))}%` }}
+                  />
+                </div>
+                {child.stage_name === 'Structured Analysis State' && job.status !== 'running' && job.status !== 'queued' && (
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      onClick={handleStructuredAnalysisRetry}
+                      className="secondary-button px-4 py-2 text-xs"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      <span>Retry From This Stage</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Terminal logs console */}
       <LogViewer 
         logs={logs}
@@ -187,6 +289,27 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
       {/* Blueprint Live Preview markdown component */}
       {job.status === 'completed' && (
         <>
+          {artifacts.length > 0 && (
+            <div className="section-card">
+              <h3 className="mb-4 text-base font-bold text-slate-900">Generated Blueprint Files</h3>
+              <div className="mb-4 flex flex-wrap gap-2">
+                {artifacts.map((artifact) => (
+                  <button
+                    key={artifact.path}
+                    onClick={() => handleSelectArtifact(artifact.path)}
+                    className={`pill-tab text-xs ${
+                      selectedArtifactPath === artifact.path
+                        ? 'bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.26)]'
+                        : 'bg-white/70 text-slate-700 hover:bg-white'
+                    }`}
+                  >
+                    {artifact.label}
+                  </button>
+                ))}
+              </div>
+              {selectedArtifactContent && <MarkdownPreview markdown={selectedArtifactContent} />}
+            </div>
+          )}
           <div className="glass-panel-soft mb-4 flex flex-wrap gap-2 rounded-[24px] p-2">
             <button
               onClick={() => setActiveTab('spec')}

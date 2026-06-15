@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from app.services.redaction_service import redact_secrets
 from app.services.providers import get_provider
 from app.services.providers.provider_limits import is_local_provider_name
 from app.utils.file_filters import is_important_file
+from app.utils.repo_name import repo_name_from_url
 from app.services.summary_service import SummaryMapService
 from app.services.reduce_service import ReduceService
 from app.services.incremental_generator import IncrementalSpecGenerator
@@ -24,11 +26,14 @@ logger = logging.getLogger(__name__)
 LOCAL_DIRECT_MODE_MIN_OUTPUT_TOKENS = 6000
 LOCAL_DIRECT_MODE_MIN_CHUNK_SIZE = 50000
 DEFAULT_QUALITY_STRATEGY = "hierarchical"
+STRUCTURED_ANALYSIS_STAGE_KEY = "analysis_state"
+STRUCTURED_ANALYSIS_STAGE_NAME = "Structured Analysis State"
 
 class AnalysisService:
     def __init__(self, db: Session, job_id: str):
         self.db = db
         self.job_id = job_id
+        self.child_jobs: dict[str, str] = {}
         
     def log(self, message: str, level: str = "INFO"):
         """Logs a message to Python logging and inserts it into the SQLite database."""
@@ -88,6 +93,103 @@ class AnalysisService:
         finally:
             db.close()
 
+    def ensure_child_job(
+        self,
+        stage_key: str,
+        stage_name: str,
+        repo_url: str,
+        repo_name: str,
+        provider: str,
+        model: str,
+        *,
+        job_kind: str = "stage",
+        sort_index: int = 0,
+    ) -> str:
+        cached = self.child_jobs.get(stage_key)
+        if cached:
+            return cached
+
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            existing = (
+                db.query(Job)
+                .filter(Job.parent_job_id == self.job_id, Job.stage_name == stage_name)
+                .first()
+            )
+            if existing:
+                self.child_jobs[stage_key] = existing.id
+                return existing.id
+
+            child_id = str(uuid.uuid4())
+            child = Job(
+                id=child_id,
+                parent_job_id=self.job_id,
+                job_kind=job_kind,
+                stage_name=stage_name,
+                sort_index=sort_index,
+                repo_url=repo_url,
+                repo_name=repo_name,
+                status="queued",
+                progress=0,
+                current_step=f"Queued: {stage_name}",
+                provider=provider,
+                model=model,
+            )
+            db.add(child)
+            db.commit()
+            self.child_jobs[stage_key] = child_id
+            return child_id
+        finally:
+            db.close()
+
+    def update_child_job(
+        self,
+        stage_key: str,
+        progress: int,
+        current_step: str,
+        status: str = "running",
+        error: str = None,
+    ):
+        child_job_id = self.child_jobs.get(stage_key)
+        if not child_job_id:
+            return
+
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            job = db.query(Job).filter(Job.id == child_job_id).first()
+            if not job:
+                return
+            job.progress = progress
+            job.current_step = current_step
+            job.status = status
+            if status == "running" and not job.started_at:
+                job.started_at = datetime.now(timezone.utc)
+            if error:
+                job.error_message = error
+            if status in ["completed", "failed", "cancelled"]:
+                job.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        finally:
+            db.close()
+
+    def make_stage_progress_updater(
+        self,
+        stage_key: str,
+        overall_start: int,
+        overall_end: int,
+    ):
+        span = max(1, overall_end - overall_start)
+
+        def update(progress: int, current_step: str):
+            clamped_progress = max(overall_start, min(overall_end, int(progress)))
+            relative_progress = int(((clamped_progress - overall_start) / span) * 100)
+            self.update_job(clamped_progress, current_step)
+            self.update_child_job(stage_key, relative_progress, current_step, "running")
+
+        return update
+
     def get_available_output_path(self, base_name: str) -> Path:
         """Return a stable output path without job IDs, adding a numeric suffix only on collision."""
         candidate = OUTPUTS_DIR / base_name
@@ -116,7 +218,309 @@ class AnalysisService:
             return 1
         return normalized_batch_size
 
-    def run_analysis(self, repo_url: str, github_token: str = None, provider_override: str = None, model_override: str = None):
+    def write_evidence_extraction_report(
+        self,
+        workspace_path: Path,
+        repo_name: str,
+        repo_url: str,
+        inventory_summary: dict,
+        manifests: list[str],
+        allowed_files: list[dict],
+        skipped_for_type: int,
+        component_specs: dict[str, str],
+    ) -> Path:
+        evidence_dir = workspace_path / "evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_count = len(list((workspace_path / "summaries").rglob("*.json")))
+        component_names = list(component_specs.keys())
+        sample_files = [entry["path"] for entry in allowed_files[:20]]
+        report_lines = [
+            "# Evidence Extraction Report",
+            "",
+            f"- Repository: `{repo_name}`",
+            f"- Source URL: {repo_url}",
+            f"- Generated At: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+            "",
+            "## Inventory Summary",
+            f"- Included files in inventory: {inventory_summary.get('file_count_included', 0)}",
+            f"- Candidate files selected for evidence extraction: {len(allowed_files)}",
+            f"- Files skipped by type filter: {skipped_for_type}",
+            f"- Persisted summary artifacts: {summary_count}",
+            f"- Synthesized components: {len(component_names)}",
+            "",
+            "## Manifest Evidence",
+        ]
+
+        if manifests:
+            report_lines.extend(f"- `{manifest}`" for manifest in manifests)
+        else:
+            report_lines.append("- No manifest files were detected.")
+
+        report_lines.extend([
+            "",
+            "## Candidate File Sample",
+        ])
+        if sample_files:
+            report_lines.extend(f"- `{path}`" for path in sample_files)
+        else:
+            report_lines.append("- No candidate files were selected.")
+
+        report_lines.extend([
+            "",
+            "## Component Synthesis Coverage",
+        ])
+        if component_names:
+            report_lines.extend(f"- `{component}`" for component in component_names)
+        else:
+            report_lines.append("- No component groups were synthesized.")
+
+        report_lines.extend([
+            "",
+            "## Artifact Directories",
+            "- `summaries/`: file-level evidence records",
+            "- `components/`: synthesized component specifications",
+            "- `analysis/`: shared structured analysis-state artifacts",
+            "- `sections/`: generated blueprint section drafts and compiled blueprint",
+            "",
+            "## Notes",
+            "- This report summarizes the evidence extraction stage only.",
+            "- It is intended to provide a readable checkpoint before section-level blueprint generation.",
+        ])
+
+        report_path = evidence_dir / "extraction_report.md"
+        report_path.write_text("\n".join(report_lines), encoding="utf-8")
+        return report_path
+
+    def load_provider_settings(self, settings, provider_name: str) -> tuple[str, str]:
+        api_key = ""
+        if settings.api_keys_json:
+            try:
+                api_keys = json.loads(settings.api_keys_json or "{}")
+                api_key = api_keys.get(provider_name, "")
+            except Exception:
+                pass
+        if not api_key and provider_name == settings.provider:
+            api_key = settings.api_key
+
+        base_url = settings.base_url if provider_name == settings.provider else ""
+        return api_key, base_url
+
+    def load_component_specs_from_workspace(self, workspace_path: Path) -> dict[str, str]:
+        components_dir = workspace_path / "components"
+        if not components_dir.exists():
+            raise Exception("Component synthesis artifacts are missing from the source job workspace")
+
+        component_specs: dict[str, str] = {}
+        for spec_path in sorted(components_dir.glob("*_spec.txt")):
+            component_name = spec_path.stem.replace("_spec", "").replace("_", "/")
+            component_specs[component_name] = spec_path.read_text(encoding="utf-8", errors="ignore")
+
+        if not component_specs:
+            raise Exception("No synthesized component specifications were found for the source job")
+        return component_specs
+
+    def load_inventory_for_job(self, source_job: Job) -> dict:
+        inventory_candidates = []
+        if source_job.workspace_path:
+            workspace = Path(source_job.workspace_path)
+            inventory_candidates.extend(sorted(workspace.rglob("*_inventory.json")))
+        inventory_candidates.append(OUTPUTS_DIR / f"{source_job.id}_inventory.json")
+
+        for candidate in inventory_candidates:
+            if candidate.exists() and candidate.is_file():
+                return json.loads(candidate.read_text(encoding="utf-8"))
+
+        raise Exception("Repository inventory is not available for the source job")
+
+    def build_manifests_context_from_workspace(
+        self,
+        source_workspace: Path,
+        manifest_paths: list[str],
+    ) -> str:
+        repo_roots = [path for path in source_workspace.iterdir() if path.is_dir() and path.name not in {"analysis", "components", "evidence", "sections", "summaries", "docs"}]
+        manifest_contexts: list[str] = []
+
+        for manifest_path in manifest_paths:
+            content = None
+            for repo_root in repo_roots:
+                candidate = repo_root / manifest_path
+                if candidate.exists() and candidate.is_file():
+                    content = candidate.read_text(encoding="utf-8", errors="ignore")
+                    break
+
+            if content is None:
+                summary_path = source_workspace / "summaries" / f"{manifest_path}.json"
+                if summary_path.exists() and summary_path.is_file():
+                    try:
+                        summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
+                        content = summary_data.get("content") or summary_data.get("evidence", "")
+                    except Exception:
+                        content = None
+
+            if content:
+                manifest_contexts.append(f"File: {manifest_path}\n```\n{content}\n```")
+
+        return "\n\n".join(manifest_contexts)
+
+    def prepare_resume_workspace(self, source_workspace: Path, workspace_path: Path):
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        for folder_name in ["components", "evidence", "summaries"]:
+            source_dir = source_workspace / folder_name
+            if source_dir.exists() and source_dir.is_dir():
+                shutil.copytree(source_dir, workspace_path / folder_name, dirs_exist_ok=True)
+
+    def finalize_blueprint_output(
+        self,
+        blueprint_content: str,
+        repo_name: str,
+        workspace_path: Path,
+        inventory_json_path: Path | None = None,
+    ) -> str:
+        docs_dir = workspace_path / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        output_md_name = f"{repo_name}_REBUILD_BLUEPRINT.md"
+        repo_output_path = docs_dir / output_md_name
+        repo_output_path.write_text(blueprint_content, encoding="utf-8")
+
+        local_output_path = self.get_available_output_path(output_md_name)
+        shutil.copy(str(repo_output_path), str(local_output_path))
+
+        if inventory_json_path and inventory_json_path.exists():
+            local_inventory_path = OUTPUTS_DIR / f"{self.job_id}_inventory.json"
+            shutil.copy(str(inventory_json_path), str(local_inventory_path))
+
+        self.update_job(100, "Analysis complete", "completed", output_path=str(local_output_path))
+        self.update_child_job("compile", 100, "Final blueprint compiled and saved", "completed")
+        self.log_stage("complete", "Rebuild blueprint saved successfully.", output=str(local_output_path))
+        return str(local_output_path)
+
+    def run_structured_analysis_retry(
+        self,
+        *,
+        source_job_id: str,
+        repo_url: str,
+        provider_name: str,
+        model_name: str,
+        provider,
+        workspace_path: Path,
+    ):
+        source_job = self.db.query(Job).filter(Job.id == source_job_id).first()
+        if not source_job:
+            raise Exception("Source job not found for structured analysis retry")
+        if not source_job.workspace_path:
+            raise Exception("Source job does not have a reusable workspace for structured analysis retry")
+
+        source_workspace = Path(source_job.workspace_path)
+        if not source_workspace.exists() or not source_workspace.is_dir():
+            raise Exception(
+                "Source job workspace is no longer available. "
+                "Run a full analysis again or keep cloned workspaces enabled for stage-level retries."
+            )
+
+        self.log_stage(
+            "retry",
+            "Resuming from Structured Analysis State using persisted evidence artifacts.",
+            source_job_id=source_job_id,
+            provider=provider_name,
+            model=model_name,
+        )
+        self.update_job(12, "Preparing structured-analysis retry workspace")
+        self.prepare_resume_workspace(source_workspace, workspace_path)
+
+        inventory_data = self.load_inventory_for_job(source_job)
+        inventory_summary = inventory_data.get("summary", {})
+        manifest_paths = inventory_summary.get("manifest_files", [])
+        file_entries = inventory_data.get("files", [])
+        file_tree_list = [entry.get("path") for entry in file_entries if entry.get("path")]
+        component_specs = self.load_component_specs_from_workspace(source_workspace)
+        manifests_content = self.build_manifests_context_from_workspace(source_workspace, manifest_paths)
+
+        self.update_child_job("evidence", 100, "Reused existing evidence extraction artifacts", "completed")
+        self.update_job(86, "Reused evidence extraction artifacts from source job")
+        self.log_stage(
+            "retry",
+            "Loaded persisted evidence for downstream regeneration.",
+            files=len(file_tree_list),
+            manifests=len(manifest_paths),
+            components=len(component_specs),
+        )
+
+        section_definitions = [
+            ("foundation", "Sections 0 to 6", 30),
+            ("functional_architecture", "Sections 7 to 10", 40),
+            ("data_api_ui_security", "Sections 11 to 14", 50),
+            ("ops_quality_delivery", "Sections 15 to 19", 60),
+        ]
+        self.update_child_job(STRUCTURED_ANALYSIS_STAGE_KEY, 10, "Preparing structured analysis state", "running")
+        for section_id, section_name, sort_index in section_definitions:
+            self.ensure_child_job(
+                section_id,
+                section_name,
+                repo_url,
+                source_job.repo_name,
+                provider_name,
+                model_name,
+                job_kind="section",
+                sort_index=sort_index,
+            )
+
+        generator = IncrementalSpecGenerator(
+            provider=provider,
+            workspace_path=workspace_path,
+            log_fn=self.log,
+            progress_fn=self.update_job,
+            section_status_fn=lambda section_id, progress, step, status="running": self.update_child_job(section_id, progress, step, status),
+        )
+        blueprint_content = generator.generate_blueprint(
+            repo_url=repo_url,
+            repo_name=source_job.repo_name,
+            file_tree=file_tree_list,
+            manifests_content=manifests_content,
+            component_specs=component_specs,
+        )
+        self.update_child_job(STRUCTURED_ANALYSIS_STAGE_KEY, 100, "Structured analysis state complete", "completed")
+        self.log_stage(
+            "assembly",
+            "Structured-analysis retry completed blueprint generation.",
+            output_chars=len(blueprint_content),
+            section_chunks="4 validated chunks",
+        )
+
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        metadata_header = (
+            f"> **Analysis Metadata**\n"
+            f"> - **Repository URL**: {repo_url}\n"
+            f"> - **Generated At**: {now_str}\n"
+            f"> - **LLM Provider**: `{provider_name}`\n"
+            f"> - **Model Used**: `{model_name}`\n"
+            f"> - **Analysis Strategy**: `Hierarchical (Structured Analysis Retry)`\n\n"
+            f"---\n\n"
+        )
+        blueprint_content = metadata_header + blueprint_content
+
+        inventory_output_path = OUTPUTS_DIR / f"{source_job.id}_inventory.json"
+        if not inventory_output_path.exists():
+            inventory_output_path = None
+
+        self.update_child_job("compile", 40, "Assembling final compiled blueprint", "running")
+        self.update_job(98, "Saving rebuild blueprint")
+        self.finalize_blueprint_output(
+            blueprint_content=blueprint_content,
+            repo_name=source_job.repo_name,
+            workspace_path=workspace_path,
+            inventory_json_path=inventory_output_path,
+        )
+
+    def run_analysis(
+        self,
+        repo_url: str,
+        github_token: str = None,
+        provider_override: str = None,
+        model_override: str = None,
+        source_job_id: str = None,
+        resume_from_stage: str = None,
+    ):
         """Executes the full repository analysis pipeline."""
         workspace_path = None
         repo_path = None
@@ -134,29 +538,13 @@ class AnalysisService:
             # Load provider
             provider_name = provider_override or settings.provider
             model_name = model_override or settings.model
-            
-            # Resolve api key for the chosen provider
-            api_key = ""
-            if settings.api_keys_json:
-                import json
-                try:
-                    api_keys = json.loads(settings.api_keys_json or "{}")
-                    api_key = api_keys.get(provider_name, "")
-                except Exception:
-                    pass
-            if not api_key and provider_name == settings.provider:
-                api_key = settings.api_key
-                
-            # If provider is overridden and different from active setting, do not use settings.base_url (which belongs to the active provider)
-            if provider_name == settings.provider:
-                base_url = settings.base_url
-            else:
-                base_url = ""
+            api_key, base_url = self.load_provider_settings(settings, provider_name)
             
             # Handle github token override
             token = github_token or settings.github_token
             
             self.log(f"Using LLM Provider: {provider_name} (Model: {model_name})")
+            repo_name = repo_name_from_url(repo_url)
 
             # Setup workspace
             workspace_path = JOBS_DIR / self.job_id
@@ -169,8 +557,33 @@ class AnalysisService:
                 job.started_at = datetime.now(timezone.utc)
                 self.db.commit()
 
+            self.ensure_child_job("evidence", "Evidence Extraction", repo_url, repo_name, provider_name, model_name, sort_index=10)
+            self.ensure_child_job(STRUCTURED_ANALYSIS_STAGE_KEY, STRUCTURED_ANALYSIS_STAGE_NAME, repo_url, repo_name, provider_name, model_name, sort_index=20)
+            self.ensure_child_job("compile", "Compile Final Blueprint", repo_url, repo_name, provider_name, model_name, job_kind="compile", sort_index=90)
+
+            provider = get_provider(provider_name, api_key, base_url, model_name)
+            provider.verify_selected_model()
+            self.log_stage(
+                "provider",
+                "Verified selected model before analysis execution.",
+                provider=provider_name,
+                model=model_name,
+            )
+
+            if resume_from_stage == STRUCTURED_ANALYSIS_STAGE_KEY:
+                self.run_structured_analysis_retry(
+                    source_job_id=source_job_id,
+                    repo_url=repo_url,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    provider=provider,
+                    workspace_path=workspace_path,
+                )
+                return
+
             # Step 1: Clone Repository
             self.check_cancelled()
+            self.update_child_job("evidence", 5, "Cloning repository", "running")
             self.update_job(10, "Cloning repository")
             self.log_stage("clone", "Cloning repository into temporary workspace...")
             repo_path = GitService.clone_repository(repo_url, workspace_path, token)
@@ -272,15 +685,6 @@ class AnalysisService:
                 return
 
             # Real LLM Pipeline
-            provider = get_provider(provider_name, api_key, base_url, model_name)
-            provider.verify_selected_model()
-            self.log_stage(
-                "provider",
-                "Verified selected model before analysis execution.",
-                provider=provider_name,
-                model=model_name,
-            )
-            
             # Resolve model limits dynamically
             limits = provider.get_model_limits(model_name)
             resolved_max_output_tokens = limits["max_output_tokens"]
@@ -325,11 +729,12 @@ class AnalysisService:
                 
                 # Step 4: Map Phase - summarize files in parallel
                 self.update_job(34, "Preparing evidence extraction")
+                evidence_progress = self.make_stage_progress_updater("evidence", 35, 86)
                 map_service = SummaryMapService(
                     provider=provider,
                     workspace_path=workspace_path,
                     log_fn=self.log,
-                    progress_fn=self.update_job
+                    progress_fn=evidence_progress
                 )
                 
                 allowed_files = []
@@ -350,6 +755,7 @@ class AnalysisService:
                     map_batch_size=effective_map_batch_size,
                 )
                 self.update_job(35, f"Starting summarization for {len(allowed_files)} candidate files")
+                self.update_child_job("evidence", 30, f"Summarizing {len(allowed_files)} candidate files", "running")
                 summaries = map_service.map_codebase(
                     files_list=allowed_files,
                     repo_path=repo_path,
@@ -359,11 +765,12 @@ class AnalysisService:
                 # Step 5: Reduce Phase - synthesize components
                 self.check_cancelled()
                 self.update_job(74, "Preparing component synthesis")
+                self.update_child_job("evidence", 78, "Synthesizing architectural components", "running")
                 reduce_service = ReduceService(
                     provider=provider,
                     workspace_path=workspace_path,
                     log_fn=self.log,
-                    progress_fn=self.update_job
+                    progress_fn=evidence_progress
                 )
                 component_specs = reduce_service.reduce_summaries(summaries)
                 self.log_stage(
@@ -372,6 +779,22 @@ class AnalysisService:
                     components=len(component_specs),
                     summary_records=len(summaries),
                 )
+                evidence_report_path = self.write_evidence_extraction_report(
+                    workspace_path=workspace_path,
+                    repo_name=repo_name,
+                    repo_url=repo_url,
+                    inventory_summary=summary,
+                    manifests=manifests,
+                    allowed_files=allowed_files,
+                    skipped_for_type=skipped_for_type,
+                    component_specs=component_specs,
+                )
+                self.log_stage(
+                    "evidence",
+                    "Evidence extraction report written.",
+                    report=str(evidence_report_path),
+                )
+                self.update_child_job("evidence", 100, "Evidence extraction complete", "completed")
                 
                 # Step 6: Load manifests content for global context
                 manifests_context_list = []
@@ -397,11 +820,30 @@ class AnalysisService:
                 # Step 7: Incremental generation of final blueprint
                 self.check_cancelled()
                 self.update_job(87, "Preparing rebuild blueprint generation")
+                self.update_child_job(STRUCTURED_ANALYSIS_STAGE_KEY, 10, "Preparing structured analysis state", "running")
+                section_definitions = [
+                    ("foundation", "Sections 0 to 6", 30),
+                    ("functional_architecture", "Sections 7 to 10", 40),
+                    ("data_api_ui_security", "Sections 11 to 14", 50),
+                    ("ops_quality_delivery", "Sections 15 to 19", 60),
+                ]
+                for section_id, section_name, sort_index in section_definitions:
+                    self.ensure_child_job(
+                        section_id,
+                        section_name,
+                        repo_url,
+                        repo_name,
+                        provider_name,
+                        model_name,
+                        job_kind="section",
+                        sort_index=sort_index,
+                    )
                 generator = IncrementalSpecGenerator(
                     provider=provider,
                     workspace_path=workspace_path,
                     log_fn=self.log,
-                    progress_fn=self.update_job
+                    progress_fn=self.update_job,
+                    section_status_fn=lambda section_id, progress, step, status="running": self.update_child_job(section_id, progress, step, status),
                 )
                 file_tree_list = [f["path"] for f in allowed_files]
                 blueprint_content = generator.generate_blueprint(
@@ -411,6 +853,7 @@ class AnalysisService:
                     manifests_content=manifests_content,
                     component_specs=component_specs
                 )
+                self.update_child_job(STRUCTURED_ANALYSIS_STAGE_KEY, 100, "Structured analysis state complete", "completed")
                 self.log_stage(
                     "assembly",
                     "Blueprint generation completed.",
@@ -559,27 +1002,19 @@ class AnalysisService:
                 blueprint_content = metadata_header + blueprint_content
             
             # Step 8: Save Outputs
+            self.update_child_job("compile", 40, "Assembling final compiled blueprint", "running")
             self.update_job(98, "Saving rebuild blueprint")
-            output_md_name = f"{repo_name}_REBUILD_BLUEPRINT.md"
-            repo_output_path = docs_dir / output_md_name
-            repo_output_path.write_text(blueprint_content, encoding="utf-8")
-            
-            # Copy to local outputs folder
-            local_output_path = self.get_available_output_path(output_md_name)
-            shutil.copy(str(repo_output_path), str(local_output_path))
-            
-            # Copy inventory JSON to local outputs folder
-            if 'inventory_json_path' in locals() and inventory_json_path.exists():
-                local_inventory_path = OUTPUTS_DIR / f"{self.job_id}_inventory.json"
-                shutil.copy(str(inventory_json_path), str(local_inventory_path))
+            self.finalize_blueprint_output(
+                blueprint_content=blueprint_content,
+                repo_name=repo_name,
+                workspace_path=workspace_path,
+                inventory_json_path=inventory_json_path if 'inventory_json_path' in locals() else None,
+            )
             
             # Clean up cloned repo if configured
             if not settings.keep_cloned_repos:
                 self.log_stage("cleanup", "Cleaning up cloned repository workspace...")
                 shutil.rmtree(repo_path)
-                
-            self.update_job(100, "Analysis complete", "completed", output_path=str(local_output_path))
-            self.log_stage("complete", "Rebuild blueprint saved successfully.", output=str(local_output_path))
 
         except Exception as e:
             err_msg = str(e)
@@ -588,6 +1023,8 @@ class AnalysisService:
             if is_cancelled:
                 self.log("Analysis aborted: Job was cancelled by the user", "WARNING")
                 self.update_job(100, "Job cancelled by user", "cancelled")
+                for stage_key in list(self.child_jobs.keys()):
+                    self.update_child_job(stage_key, 100, "Cancelled", "cancelled")
             else:
                 if "429" in err_msg or "rate limit" in err_msg.lower() or "rate-limit" in err_msg.lower():
                     err_msg = f"Rate Limit Exceeded (429): {err_msg}. Recommendation: Switch to a different provider/model in Settings, or add your own API key to bypass shared limits."
@@ -595,6 +1032,8 @@ class AnalysisService:
                     err_msg = f"Model Not Found / Access Denied (404): {err_msg}. Recommendation: Verify your API key is correctly configured in Settings and has sufficient credits/funds. Alternatively, select a free model (e.g. ending in ':free' like 'meta-llama/llama-3-8b-instruct:free')."
                 self.log(f"Analysis failed: {err_msg}", "ERROR")
                 self.update_job(100, "Failed", "failed", error=err_msg)
+                for stage_key in list(self.child_jobs.keys()):
+                    self.update_child_job(stage_key, 100, f"Failed: {err_msg}", "failed", error=err_msg)
                 
             # Clean up workspace folder if cloning failed or job was cancelled
             if workspace_path and workspace_path.exists() and not settings.keep_cloned_repos:

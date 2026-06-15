@@ -67,9 +67,15 @@ class JobCreate(BaseModel):
     github_token: Optional[str] = None
     provider_override: Optional[str] = None
     model_override: Optional[str] = None
+    source_job_id: Optional[str] = None
+    resume_from_stage: Optional[str] = None
 
 class JobResponse(BaseModel):
     id: str
+    parent_job_id: Optional[str] = None
+    job_kind: Optional[str] = None
+    stage_name: Optional[str] = None
+    sort_index: Optional[int] = None
     repo_url: str
     repo_name: str
     status: str
@@ -97,6 +103,19 @@ class JobLogResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class JobArtifactResponse(BaseModel):
+    path: str
+    label: str
+    category: str
+
+
+class JobArtifactContentResponse(BaseModel):
+    path: str
+    label: str
+    category: str
+    content: str
 
 # Test Connection Schemas
 class TestConnectionRequest(BaseModel):
