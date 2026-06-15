@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -8,6 +9,39 @@ from app.config import mask_secret
 from app.services.providers import get_provider
 
 router = APIRouter()
+
+
+def score_latency(latency_ms: int) -> str:
+    if latency_ms <= 1500:
+        return "Excellent"
+    if latency_ms <= 4000:
+        return "Good"
+    if latency_ms <= 8000:
+        return "Fair"
+    return "Slow"
+
+
+def format_test_connection_error(provider_name: str, model: Optional[str], error: Exception) -> str:
+    if isinstance(error, httpx.TimeoutException):
+        if model:
+            return (
+                f"Connected to '{provider_name}', but model '{model}' did not answer the test prompt within 30 seconds. "
+                "The model may still be loading, running too slowly, or the local runtime may be overloaded."
+            )
+        return (
+            f"Connected to '{provider_name}', but the live response test timed out after 30 seconds."
+        )
+
+    message = str(error).strip()
+    if message.lower() == "timed out":
+        if model:
+            return (
+                f"Connected to '{provider_name}', but model '{model}' did not answer the test prompt within 30 seconds. "
+                "The model may still be loading, running too slowly, or the local runtime may be overloaded."
+            )
+        return f"Connected to '{provider_name}', but the live response test timed out after 30 seconds."
+
+    return message
 
 @router.get("/settings", response_model=SettingResponse)
 def get_settings(db: Session = Depends(get_db)):
@@ -118,11 +152,30 @@ def test_connection(payload: TestConnectionRequest, db: Session = Depends(get_db
         provider = get_provider(provider_name, api_key, base_url, model)
         success = provider.validate_settings()
         if success:
-            return TestConnectionResponse(success=True, message=f"Successfully connected to provider '{provider_name}'")
+            probe_data = None
+            if model:
+                probe_data = provider.probe_model_response()
+                latency_ms = probe_data["latency_ms"]
+                latency_score = score_latency(latency_ms)
+                return TestConnectionResponse(
+                    success=True,
+                    message=f"Connected successfully and received a live response from '{probe_data['model']}'.",
+                    latency_ms=latency_ms,
+                    latency_score=latency_score,
+                    verified_model=probe_data["model"],
+                    response_preview=probe_data["response_preview"],
+                )
+            return TestConnectionResponse(
+                success=True,
+                message=f"Successfully connected to provider '{provider_name}'. Select a model to test live model response time."
+            )
         else:
             return TestConnectionResponse(success=False, message=f"Failed to connect to provider '{provider_name}'. Please verify API key and URL.")
     except Exception as e:
-        return TestConnectionResponse(success=False, message=str(e))
+        return TestConnectionResponse(
+            success=False,
+            message=format_test_connection_error(provider_name, model, e),
+        )
 
 @router.get("/settings/models")
 def get_provider_models(

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from time import perf_counter
 from typing import List
 
 from app.services.providers.provider_limits import (
@@ -28,7 +29,14 @@ class BaseLLMProvider(ABC):
         pass
         
     @abstractmethod
-    def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 4000,
+        timeout_seconds: float = 3600.0,
+    ) -> str:
         """
         Sends a generation request to the LLM.
         """
@@ -55,6 +63,23 @@ class BaseLLMProvider(ABC):
             raise Exception(
                 f"Provider responded with model '{response_model}' while '{requested_model}' was requested"
             )
+
+    def probe_model_response(self) -> dict:
+        self.verify_selected_model()
+        started_at = perf_counter()
+        response_text = self.generate(
+            prompt="Reply with a short health check acknowledgement in 3 to 8 words.",
+            system_prompt="You are validating model connectivity. Respond briefly and plainly.",
+            temperature=0.0,
+            max_tokens=32,
+            timeout_seconds=30.0,
+        )
+        latency_ms = int((perf_counter() - started_at) * 1000)
+        return {
+            "model": getattr(self, "model", ""),
+            "response_preview": response_text.strip()[:160],
+            "latency_ms": latency_ms,
+        }
 
     def get_model_limits(self, model_name: str) -> dict:
         """

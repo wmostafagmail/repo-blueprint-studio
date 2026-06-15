@@ -16,7 +16,14 @@ class MockProvider(BaseLLMProvider):
     def list_models(self) -> List[str]:
         return ["mock-model-v1", "mock-model-v2"]
 
-    def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 4000,
+        timeout_seconds: float = 3600.0,
+    ) -> str:
         # Try to extract repo name from prompt
         repo_name_match = re.search(r"(?:Repository:|Repo Name:|repo_name)\s*[:`]*\s*([a-zA-Z0-9_\-\.]+)", prompt, re.IGNORECASE)
         repo_name = repo_name_match.group(1) if repo_name_match else "mock-repo"

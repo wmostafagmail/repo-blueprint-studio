@@ -44,7 +44,14 @@ class OpenRouterProvider(OpenAIProvider):
             pass
         return ["google/gemini-2.5-flash", "openai/gpt-4o", "meta-llama/llama-3-8b-instruct:free"]
 
-    def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 4000,
+        timeout_seconds: float = 3600.0,
+    ) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = self._get_headers()
         payload = {
@@ -64,9 +71,10 @@ class OpenRouterProvider(OpenAIProvider):
         for attempt in range(max_attempts):
             try:
                 with httpx.Client() as client:
-                    resp = client.post(url, headers=headers, json=payload, timeout=3600.0)
+                    resp = client.post(url, headers=headers, json=payload, timeout=timeout_seconds)
                     if resp.status_code == 200:
                         data = resp.json()
+                        self.assert_response_model(data.get("model"))
                         return data["choices"][0]["message"]["content"]
                     
                     if resp.status_code in [429, 502, 503, 504] and attempt < max_attempts - 1:

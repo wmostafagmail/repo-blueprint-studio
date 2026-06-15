@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
-import { api, ModelLimit, Setting } from '../api';
+import { api, ModelLimit, Setting, TestConnectionResponse } from '../api';
 
 const isLocalProvider = (provider: string): boolean => provider === 'ollama' || provider === 'lmstudio';
 
@@ -92,7 +92,7 @@ export const SettingsForm: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const [testStatus, setTestStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [testStatus, setTestStatus] = useState<({ type: 'success' | 'error' } & TestConnectionResponse) | null>(null);
 
   // Models listing states
   const [models, setModels] = useState<string[]>([]);
@@ -273,12 +273,12 @@ export const SettingsForm: React.FC = () => {
       });
 
       if (res.success) {
-        setTestStatus({ type: 'success', message: res.message });
+        setTestStatus({ type: 'success', ...res });
       } else {
-        setTestStatus({ type: 'error', message: res.message });
+        setTestStatus({ type: 'error', ...res });
       }
     } catch (err: any) {
-      setTestStatus({ type: 'error', message: err.message || 'Connection test failed.' });
+      setTestStatus({ type: 'error', success: false, message: err.message || 'Connection test failed.' });
     } finally {
       setTesting(false);
     }
@@ -460,17 +460,42 @@ export const SettingsForm: React.FC = () => {
             </button>
 
             {testStatus && (
-              <div className={`glass-panel-soft flex items-center space-x-2 rounded-2xl px-3 py-2 text-xs ${
+              <div className={`glass-panel-soft w-full rounded-2xl px-3 py-3 text-xs ${
                 testStatus.type === 'success' 
                   ? 'text-emerald-800' 
                   : 'text-rose-800'
               }`}>
-                {testStatus.type === 'success' ? (
-                  <CheckCircle className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-rose-600 flex-shrink-0" />
-                )}
-                <span className="font-medium">{testStatus.message}</span>
+                <div className="flex items-start space-x-2">
+                  {testStatus.type === 'success' ? (
+                    <CheckCircle className="h-4 w-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-1">
+                    <div className="font-medium">{testStatus.message}</div>
+                    {testStatus.verified_model && (
+                      <div className="text-[11px]">
+                        Model: <span className="font-mono">{testStatus.verified_model}</span>
+                      </div>
+                    )}
+                    {typeof testStatus.latency_ms === 'number' && (
+                      <div className="text-[11px]">
+                        Response time: <span className="font-semibold">{testStatus.latency_ms} ms</span>
+                        {testStatus.latency_score && (
+                          <>
+                            {" "}
+                            • Score: <span className="font-semibold">{testStatus.latency_score}</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {testStatus.response_preview && (
+                      <div className="text-[11px] leading-5 opacity-90">
+                        Preview: <span className="font-mono">{testStatus.response_preview}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

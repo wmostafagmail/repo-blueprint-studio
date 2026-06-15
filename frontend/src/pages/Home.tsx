@@ -198,21 +198,44 @@ export const Home: React.FC<HomeProps> = ({ onNavigateToJob, onNavigateToHistory
         ) : (
           <div className="space-y-3">
             {recentJobs.map((job) => (
-              <div 
-                key={job.id} 
-                className="glass-panel-soft flex cursor-pointer flex-col gap-3 rounded-[24px] px-4 py-4 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white sm:flex-row sm:items-center sm:justify-between"
+              <div
+                key={job.id}
+                className="glass-panel-soft cursor-pointer rounded-[24px] px-4 py-4 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white"
                 onClick={() => onNavigateToJob(job.id)}
               >
-                <div className="min-w-0">
-                  <h4 className="text-sm font-bold text-slate-800">{job.repo_name}</h4>
-                  <p className="mt-1 truncate font-mono text-xs text-slate-500">{job.repo_url}</p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-bold text-slate-800">{job.repo_name}</h4>
+                    <p className="mt-1 truncate font-mono text-xs text-slate-500">{job.repo_url}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="hidden text-[11px] font-medium text-slate-500 sm:inline">
+                      {new Date(job.created_at).toLocaleDateString()}
+                    </span>
+                    <StatusBadge status={job.status} />
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="hidden text-[11px] font-medium text-slate-500 sm:inline">
-                    {new Date(job.created_at).toLocaleDateString()}
-                  </span>
-                  <StatusBadge status={job.status} />
-                </div>
+
+                {(job.status === 'queued' || job.status === 'running') && (
+                  <div className="mt-3 rounded-[20px] bg-white/70 px-3 py-3 shadow-[inset_0_2px_6px_rgba(148,163,184,0.16)]">
+                    <div className="mb-1.5 flex items-center justify-between gap-3">
+                      <span className="truncate text-[11px] font-semibold text-slate-700">
+                        {job.current_step || (job.status === 'queued' ? 'Waiting to start' : 'In progress')}
+                      </span>
+                      <span className="shrink-0 font-mono text-[11px] font-bold text-indigo-700">
+                        {Math.max(0, Math.min(100, job.progress || 0))}%
+                      </span>
+                    </div>
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200/60">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          job.status === 'queued' ? 'bg-sky-500' : 'bg-indigo-600'
+                        }`}
+                        style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

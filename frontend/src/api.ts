@@ -45,6 +45,10 @@ export interface JobLog {
 export interface TestConnectionResponse {
   success: boolean;
   message: string;
+  latency_ms?: number;
+  latency_score?: string;
+  verified_model?: string;
+  response_preview?: string;
 }
 
 export interface ModelLimit {

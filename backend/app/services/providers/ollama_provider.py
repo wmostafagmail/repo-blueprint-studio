@@ -102,7 +102,14 @@ class OllamaProvider(BaseLLMProvider):
         return limits
 
 
-    def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 4000,
+        timeout_seconds: float = 3600.0,
+    ) -> str:
         url = f"{self.base_url}/api/chat"
         payload = {
             "model": self.model,
@@ -118,7 +125,7 @@ class OllamaProvider(BaseLLMProvider):
         }
         
         with httpx.Client() as client:
-            resp = client.post(url, json=payload, timeout=3600.0)
+            resp = client.post(url, json=payload, timeout=timeout_seconds)
             if resp.status_code != 200:
                 raise Exception(f"Ollama error ({resp.status_code}): {resp.text}")
             data = resp.json()

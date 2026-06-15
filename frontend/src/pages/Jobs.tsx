@@ -57,6 +57,35 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
     fetchJobs();
   }, []);
 
+  const renderHistoryProgress = (job: Job) => {
+    const isActive = job.status === 'queued' || job.status === 'running';
+    if (!isActive) {
+      return null;
+    }
+
+    const progressValue = Math.max(0, Math.min(100, job.progress || 0));
+    const progressTone = job.status === 'queued' ? 'bg-sky-500' : 'bg-indigo-600';
+
+    return (
+      <div className="glass-panel-soft mt-3 rounded-[20px] px-3 py-3">
+        <div className="mb-1.5 flex items-center justify-between gap-3">
+          <span className="truncate text-[11px] font-semibold text-slate-700">
+            {job.current_step || (job.status === 'queued' ? 'Waiting to start' : 'In progress')}
+          </span>
+          <span className="shrink-0 font-mono text-[11px] font-bold text-indigo-700">
+            {progressValue}%
+          </span>
+        </div>
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-white/80 shadow-[inset_0_2px_6px_rgba(148,163,184,0.2)]">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${progressTone}`}
+            style={{ width: `${progressValue}%` }}
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="section-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -140,6 +169,8 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
                         <div className="font-mono">Duration: {durationStr}</div>
                         <div className="font-mono truncate">Job ID: {job.id}</div>
                       </div>
+
+                      {renderHistoryProgress(job)}
                     </div>
 
                     <div

@@ -36,7 +36,14 @@ class OpenAIProvider(BaseLLMProvider):
         if not self.model:
             raise Exception("No model configured for OpenAI-compatible provider")
 
-    def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 4000,
+        timeout_seconds: float = 3600.0,
+    ) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self.api_key}"}
         payload = {
@@ -56,7 +63,7 @@ class OpenAIProvider(BaseLLMProvider):
         for attempt in range(max_attempts):
             try:
                 with httpx.Client() as client:
-                    resp = client.post(url, headers=headers, json=payload, timeout=3600.0)
+                    resp = client.post(url, headers=headers, json=payload, timeout=timeout_seconds)
                     if resp.status_code == 200:
                         data = resp.json()
                         self.assert_response_model(data.get("model"))

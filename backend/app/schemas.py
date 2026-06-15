@@ -109,3 +109,7 @@ class TestConnectionRequest(BaseModel):
 class TestConnectionResponse(BaseModel):
     success: bool
     message: str
+    latency_ms: Optional[int] = None
+    latency_score: Optional[str] = None
+    verified_model: Optional[str] = None
+    response_preview: Optional[str] = None

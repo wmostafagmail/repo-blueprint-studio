@@ -103,6 +103,19 @@ class AnalysisService:
                 return candidate
             counter += 1
 
+    def resolve_map_batch_size(self, provider_name: str, configured_batch_size: int) -> int:
+        normalized_batch_size = max(1, int(configured_batch_size or 1))
+        if provider_name.lower().strip() == "ollama":
+            if normalized_batch_size != 1:
+                self.log_stage(
+                    "provider",
+                    "Clamped map concurrency for Ollama to avoid local runtime stalls.",
+                    configured_map_batch_size=normalized_batch_size,
+                    effective_map_batch_size=1,
+                )
+            return 1
+        return normalized_batch_size
+
     def run_analysis(self, repo_url: str, github_token: str = None, provider_override: str = None, model_override: str = None):
         """Executes the full repository analysis pipeline."""
         workspace_path = None
@@ -305,6 +318,10 @@ class AnalysisService:
 
             if effective_strategy == "hierarchical":
                 self.log("Hierarchical Map-Reduce Strategy enabled.", "INFO")
+                effective_map_batch_size = self.resolve_map_batch_size(
+                    provider_name,
+                    getattr(settings, "map_batch_size", 5),
+                )
                 
                 # Step 4: Map Phase - summarize files in parallel
                 self.update_job(34, "Preparing evidence extraction")
@@ -316,13 +333,8 @@ class AnalysisService:
                 )
                 
                 allowed_files = []
-                skipped_for_size = 0
                 skipped_for_type = 0
                 for f in files_list:
-                    # Max file size limit
-                    if f["size_bytes"] > settings.max_file_size_kb * 1024:
-                        skipped_for_size += 1
-                        continue
                     ext = Path(f["path"]).suffix.lower()
                     if ext in [".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".woff", ".woff2", ".ttf"]:
                         skipped_for_type += 1
@@ -333,15 +345,15 @@ class AnalysisService:
                     "evidence",
                     "Prepared candidate files for summarization.",
                     candidates=len(allowed_files),
-                    skipped_for_size=skipped_for_size,
+                    skipped_for_size=0,
                     skipped_for_type=skipped_for_type,
-                    map_batch_size=getattr(settings, "map_batch_size", 5),
+                    map_batch_size=effective_map_batch_size,
                 )
                 self.update_job(38, f"Summarizing {len(allowed_files)} candidate files")
                 summaries = map_service.map_codebase(
                     files_list=allowed_files,
                     repo_path=repo_path,
-                    batch_size=getattr(settings, "map_batch_size", 5)
+                    batch_size=effective_map_batch_size
                 )
                 
                 # Step 5: Reduce Phase - synthesize components
