@@ -51,6 +51,22 @@ class LMStudioProvider(OpenAIProvider):
             pass
         return None
 
+    def verify_selected_model(self) -> None:
+        if not self.model:
+            raise Exception("No model configured for LM Studio provider")
+
+        model_payload = self._find_cached_model(self.model)
+        if not model_payload:
+            model_payload = self._fetch_model_details(self.model)
+        if model_payload:
+            return
+
+        available_models = self.list_models()
+        if self.model not in available_models:
+            raise Exception(
+                f"Selected LM Studio model '{self.model}' is not currently available from the local runtime"
+            )
+
     def get_model_limits(self, model_name: str) -> dict:
         limits = super().get_model_limits(model_name)
         model_payload = self._find_cached_model(model_name)

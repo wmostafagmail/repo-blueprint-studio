@@ -88,6 +88,16 @@
     @apply w-full rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-sm text-slate-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_10px_30px_rgba(148,163,184,0.16)] outline-none transition-all duration-200;
   }
 
+  select.input-surface {
+    color: #132238;
+    background-color: rgba(255, 255, 255, 0.82);
+  }
+
+  select.input-surface option {
+    color: #132238;
+    background: #ffffff;
+  }
+
   .input-surface:focus {
     @apply border-blue-300 bg-white ring-4 ring-blue-100/80;
   }

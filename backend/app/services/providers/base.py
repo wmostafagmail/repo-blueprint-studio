@@ -34,6 +34,28 @@ class BaseLLMProvider(ABC):
         """
         pass
 
+    def verify_selected_model(self) -> None:
+        """
+        Optional preflight hook for providers that can verify model availability
+        before long-running analysis begins.
+        """
+        return None
+
+    def normalize_model_name(self, model_name: str) -> str:
+        return (model_name or "").strip().lower()
+
+    def models_match(self, requested_model: str, response_model: str) -> bool:
+        return self.normalize_model_name(requested_model) == self.normalize_model_name(response_model)
+
+    def assert_response_model(self, response_model: str) -> None:
+        requested_model = getattr(self, "model", "")
+        if not requested_model or not response_model:
+            return
+        if not self.models_match(requested_model, response_model):
+            raise Exception(
+                f"Provider responded with model '{response_model}' while '{requested_model}' was requested"
+            )
+
     def get_model_limits(self, model_name: str) -> dict:
         """
         Returns a dictionary with 'max_output_tokens' and 'chunk_size' (context size in characters) 

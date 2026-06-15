@@ -260,6 +260,13 @@ class AnalysisService:
 
             # Real LLM Pipeline
             provider = get_provider(provider_name, api_key, base_url, model_name)
+            provider.verify_selected_model()
+            self.log_stage(
+                "provider",
+                "Verified selected model before analysis execution.",
+                provider=provider_name,
+                model=model_name,
+            )
             
             # Resolve model limits dynamically
             limits = provider.get_model_limits(model_name)

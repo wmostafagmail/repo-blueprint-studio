@@ -34,6 +34,18 @@ class OllamaProvider(BaseLLMProvider):
             pass
         return ["llama3", "mistral", "gemma"]
 
+    def verify_selected_model(self) -> None:
+        if not self.model:
+            raise Exception("No model configured for Ollama provider")
+
+        try:
+            url = f"{self.base_url}/api/show"
+            resp = httpx.post(url, json={"name": self.model}, timeout=10.0)
+            if resp.status_code != 200:
+                raise Exception(f"Ollama model verification failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            raise Exception(f"Selected Ollama model '{self.model}' could not be verified: {str(e)}") from e
+
     def get_model_limits(self, model_name: str) -> dict:
         limits = super().get_model_limits(model_name)
         try:
@@ -110,4 +122,5 @@ class OllamaProvider(BaseLLMProvider):
             if resp.status_code != 200:
                 raise Exception(f"Ollama error ({resp.status_code}): {resp.text}")
             data = resp.json()
+            self.assert_response_model(data.get("model"))
             return data["message"]["content"]

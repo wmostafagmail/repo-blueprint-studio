@@ -32,6 +32,10 @@ class OpenAIProvider(BaseLLMProvider):
             pass
         return ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
 
+    def verify_selected_model(self) -> None:
+        if not self.model:
+            raise Exception("No model configured for OpenAI-compatible provider")
+
     def generate(self, prompt: str, system_prompt: str, temperature: float = 0.2, max_tokens: int = 4000) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -55,6 +59,7 @@ class OpenAIProvider(BaseLLMProvider):
                     resp = client.post(url, headers=headers, json=payload, timeout=3600.0)
                     if resp.status_code == 200:
                         data = resp.json()
+                        self.assert_response_model(data.get("model"))
                         return data["choices"][0]["message"]["content"]
                     
                     if resp.status_code in [429, 502, 503, 504] and attempt < max_attempts - 1:
