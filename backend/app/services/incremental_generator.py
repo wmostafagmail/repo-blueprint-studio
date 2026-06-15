@@ -17,6 +17,11 @@ from app.services.prompt_builders import (
 
 logger = logging.getLogger(__name__)
 
+BLUEPRINT_PROGRESS_ANALYSIS_STATE = 87
+BLUEPRINT_PROGRESS_SECTION_START = 89
+BLUEPRINT_PROGRESS_SECTION_END = 96
+BLUEPRINT_PROGRESS_ASSEMBLY = 97
+
 
 class IncrementalSpecGenerator:
     def __init__(
@@ -136,7 +141,7 @@ class IncrementalSpecGenerator:
         component_specs: Dict[str, str],
     ) -> str:
         self.log("Starting quality-first staged rebuild blueprint generation...", "INFO")
-        self.progress(66, "Extracting structured repository findings")
+        self.progress(BLUEPRINT_PROGRESS_ANALYSIS_STATE, "Extracting structured repository findings")
 
         analysis_state = self.build_analysis_state(
             repo_url=repo_url,
@@ -155,8 +160,11 @@ class IncrementalSpecGenerator:
             chunk_range = str(chunk["range_str"])
             self.log(f"Drafting {chunk_range} using the shared high-quality blueprint contract...", "INFO")
             self.progress(
-                int(70 + (idx / total_chunks) * 18),
-                f"Drafting blueprint {chunk_range}",
+                int(
+                    BLUEPRINT_PROGRESS_SECTION_START
+                    + (idx / total_chunks) * (BLUEPRINT_PROGRESS_SECTION_END - BLUEPRINT_PROGRESS_SECTION_START)
+                ),
+                f"Drafting blueprint section {idx + 1}/{total_chunks} ({chunk_range})",
             )
 
             prompt = build_section_prompt(
@@ -183,6 +191,10 @@ class IncrementalSpecGenerator:
                     f"Quality gate flagged {len(issues)} issue(s) for {chunk_range}. Running section repair pass...",
                     "WARNING",
                 )
+                self.progress(
+                    min(BLUEPRINT_PROGRESS_SECTION_END, BLUEPRINT_PROGRESS_SECTION_START + idx + 1),
+                    f"Repairing blueprint section {idx + 1}/{total_chunks} ({chunk_range})",
+                )
                 repair_prompt = build_repair_prompt(chunk_range, section_output, issues)
                 repaired = self.provider.generate(
                     prompt=repair_prompt,
@@ -206,8 +218,12 @@ class IncrementalSpecGenerator:
             all_sections.append(section_output)
             if idx < total_chunks - 1:
                 self.log(f"Updating rolling state after {chunk_range}...", "INFO")
+                self.progress(
+                    min(BLUEPRINT_PROGRESS_SECTION_END, BLUEPRINT_PROGRESS_SECTION_START + idx + 1),
+                    f"Refreshing architectural state after section {idx + 1}/{total_chunks}",
+                )
                 rolling_state = self.generate_rolling_state_summary(section_output, rolling_state)
 
-        self.progress(92, "Assembling final rebuild blueprint")
+        self.progress(BLUEPRINT_PROGRESS_ASSEMBLY, "Assembling final rebuild blueprint")
         self.log("Assembling final rebuild blueprint from validated section chunks...", "INFO")
         return "\n\n---\n\n".join(all_sections)

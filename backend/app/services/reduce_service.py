@@ -1,5 +1,6 @@
 import json
 import logging
+from time import monotonic
 from pathlib import Path
 from typing import List, Dict, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +11,9 @@ from app.services.prompt_builders import (
 )
 
 logger = logging.getLogger(__name__)
+
+REDUCE_PROGRESS_START = 74
+REDUCE_PROGRESS_END = 86
 
 class ReduceService:
     def __init__(
@@ -25,6 +29,28 @@ class ReduceService:
         self.progress = progress_fn
         self.specs_dir = workspace_path / "components"
         self.specs_dir.mkdir(parents=True, exist_ok=True)
+        self._last_progress_emit_at = 0.0
+        self._last_progress_value = -1
+        self._last_progress_message = ""
+
+    def _emit_progress(self, progress_value: int, message: str, *, force: bool = False):
+        now = monotonic()
+        if not force:
+            if (
+                progress_value == self._last_progress_value
+                and message == self._last_progress_message
+                and (now - self._last_progress_emit_at) < 1.5
+            ):
+                return
+            if (
+                progress_value == self._last_progress_value
+                and (now - self._last_progress_emit_at) < 1.5
+            ):
+                return
+        self.progress(progress_value, message)
+        self._last_progress_emit_at = now
+        self._last_progress_value = progress_value
+        self._last_progress_message = message
 
     def group_by_components(self, summaries: List[Dict]) -> Dict[str, List[Dict]]:
         """
@@ -123,6 +149,10 @@ class ReduceService:
         
         synthesized_specs = {}
         completed = 0
+
+        if total_groups == 0:
+            self._emit_progress(REDUCE_PROGRESS_END, "No architectural components required synthesis", force=True)
+            return synthesized_specs
         
         # Concurrency limit = 2 workers to prevent overloading local models
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -141,7 +171,17 @@ class ReduceService:
                     synthesized_specs[comp_name] = f"Synthesis error: {str(e)}"
                     
                 completed += 1
-                pct = int(50 + (completed / total_groups) * 15) # Scale from 50% to 65% overall progress
-                self.progress(pct, f"Synthesizing component specs ({completed}/{total_groups} completed)")
+                pct = int(
+                    REDUCE_PROGRESS_START
+                    + (completed / total_groups) * (REDUCE_PROGRESS_END - REDUCE_PROGRESS_START)
+                )
+                progress_message = (
+                    f"Synthesizing components ({completed}/{total_groups}) - {comp_name}"
+                )
+                self._emit_progress(pct, progress_message, force=(completed == total_groups))
+                self.log(
+                    f"[reduce] Synthesized component {completed}/{total_groups}: {comp_name}",
+                    "INFO",
+                )
                 
         return synthesized_specs

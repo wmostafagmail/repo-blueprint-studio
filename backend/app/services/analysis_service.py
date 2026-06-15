@@ -349,7 +349,7 @@ class AnalysisService:
                     skipped_for_type=skipped_for_type,
                     map_batch_size=effective_map_batch_size,
                 )
-                self.update_job(38, f"Summarizing {len(allowed_files)} candidate files")
+                self.update_job(35, f"Starting summarization for {len(allowed_files)} candidate files")
                 summaries = map_service.map_codebase(
                     files_list=allowed_files,
                     repo_path=repo_path,
@@ -358,7 +358,7 @@ class AnalysisService:
                 
                 # Step 5: Reduce Phase - synthesize components
                 self.check_cancelled()
-                self.update_job(55, "Synthesizing architectural components")
+                self.update_job(74, "Preparing component synthesis")
                 reduce_service = ReduceService(
                     provider=provider,
                     workspace_path=workspace_path,
@@ -396,7 +396,7 @@ class AnalysisService:
                 
                 # Step 7: Incremental generation of final blueprint
                 self.check_cancelled()
-                self.update_job(64, "Generating rebuild blueprint sections")
+                self.update_job(87, "Preparing rebuild blueprint generation")
                 generator = IncrementalSpecGenerator(
                     provider=provider,
                     workspace_path=workspace_path,
@@ -559,7 +559,7 @@ class AnalysisService:
                 blueprint_content = metadata_header + blueprint_content
             
             # Step 8: Save Outputs
-            self.update_job(95, "Saving rebuild blueprint")
+            self.update_job(98, "Saving rebuild blueprint")
             output_md_name = f"{repo_name}_REBUILD_BLUEPRINT.md"
             repo_output_path = docs_dir / output_md_name
             repo_output_path.write_text(blueprint_content, encoding="utf-8")

@@ -1,5 +1,6 @@
 import json
 import logging
+from time import monotonic
 from pathlib import Path
 from typing import List, Dict, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,9 @@ from app.services.prompt_builders import (
 )
 
 logger = logging.getLogger(__name__)
+
+MAP_PROGRESS_START = 35
+MAP_PROGRESS_END = 73
 
 def should_preserve_raw(path_str: str) -> bool:
     """
@@ -53,6 +57,28 @@ class SummaryMapService:
         self.progress = progress_fn
         self.summaries_dir = workspace_path / "summaries"
         self.summaries_dir.mkdir(parents=True, exist_ok=True)
+        self._last_progress_emit_at = 0.0
+        self._last_progress_value = -1
+        self._last_progress_message = ""
+
+    def _emit_progress(self, progress_value: int, message: str, *, force: bool = False):
+        now = monotonic()
+        if not force:
+            if (
+                progress_value == self._last_progress_value
+                and message == self._last_progress_message
+                and (now - self._last_progress_emit_at) < 1.5
+            ):
+                return
+            if (
+                progress_value == self._last_progress_value
+                and (now - self._last_progress_emit_at) < 1.5
+            ):
+                return
+        self.progress(progress_value, message)
+        self._last_progress_emit_at = now
+        self._last_progress_value = progress_value
+        self._last_progress_message = message
 
     def summarize_file(self, file_path: str, repo_path: Path) -> Dict:
         """
@@ -151,6 +177,10 @@ class SummaryMapService:
         results = []
         completed = 0
         total = len(files_list)
+
+        if total == 0:
+            self._emit_progress(MAP_PROGRESS_END, "No candidate files required summarization", force=True)
+            return results
         
         with ThreadPoolExecutor(max_workers=batch_size) as executor:
             futures = {
@@ -168,9 +198,18 @@ class SummaryMapService:
                     results.append({"path": path, "type": "error", "content": str(e)})
                     
                 completed += 1
-                if completed % max(1, total // 10) == 0 or completed == total:
-                    pct = int(25 + (completed / total) * 25) # Scale mapping from 25% to 50% overall progress
-                    self.progress(pct, f"Mapping code files ({completed}/{total} completed)")
-                    self.log(f"Mapped {completed}/{total} files ({int(completed/total * 100)}% complete)", "INFO")
+                pct = int(
+                    MAP_PROGRESS_START
+                    + (completed / total) * (MAP_PROGRESS_END - MAP_PROGRESS_START)
+                )
+                progress_message = f"Summarizing files ({completed}/{total}) - {path}"
+                self._emit_progress(pct, progress_message, force=(completed == total))
+
+                if completed <= 3 or completed % max(1, total // 20) == 0 or completed == total:
+                    self.log(
+                        f"[map] Summarized {completed}/{total} files ({int(completed / total * 100)}% of map phase). "
+                        f"Latest: {path}",
+                        "INFO",
+                    )
                     
         return results
