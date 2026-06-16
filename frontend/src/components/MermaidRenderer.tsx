@@ -11,14 +11,102 @@ interface DiagramEntry {
   chart: string;
 }
 
+const sanitizeIdentifier = (value: string) =>
+  value
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase() || 'UNKNOWN';
+
+const repairMermaidChart = (chart: string): string => {
+  const trimmed = chart.trim();
+  const lines = trimmed.split('\n');
+  const firstMeaningfulLine = lines.find((line) => line.trim().length > 0)?.trim() || '';
+
+  if (firstMeaningfulLine.startsWith('erDiagram')) {
+    return lines
+      .map((line) => {
+        const relationMatch = line.match(/^(\s*[A-Z0-9_]+(?:\s+[A-Z0-9_]+)?)\s+([|}{o\-\.]+)\s+(\d+)\s+:\s+(.+)$/i);
+        if (relationMatch) {
+          const [, source, connector, numericTarget, relationLabel] = relationMatch;
+          const repairedTarget = sanitizeIdentifier(`${relationLabel}_${numericTarget}`);
+          return `${source} ${connector} ${repairedTarget} : ${relationLabel}`;
+        }
+        return line;
+      })
+      .join('\n');
+  }
+
+  if (/^(graph|flowchart)\b/.test(firstMeaningfulLine)) {
+    return lines
+      .map((line) =>
+        line.replace(/([A-Za-z0-9_]+)([\[\{\(\>])([^"\]\}\)><][^\]\}\)><]*[:\/&?][^\]\}\)><]*)([\]\}\)><])/g, (_match, nodeId, open, label, close) => {
+          const normalizedOpen = open === '>' ? '[' : open;
+          const normalizedClose = close === '<' ? ']' : close;
+          return `${nodeId}${normalizedOpen}"${label.trim()}"${normalizedClose}`;
+        })
+      )
+      .join('\n');
+  }
+
+  return trimmed;
+};
+
 // ─── Extract Mermaid fences from blueprint markdown ──────────────────────────
 const extractMermaidCharts = (md: string): DiagramEntry[] => {
-  const regex = /```mermaid([\s\S]*?)```/g;
   const results: DiagramEntry[] = [];
-  let match;
   let index = 1;
-  while ((match = regex.exec(md)) !== null) {
-    const chart = match[1].trim();
+  const markdownLines = md.split('\n');
+  let i = 0;
+
+  const looksLikeMarkdownBoundary = (line: string) => {
+    const trimmed = line.trim();
+    return (
+      trimmed === '```' ||
+      trimmed === '---' ||
+      /^#{1,6}\s/.test(trimmed) ||
+      /^\|.+\|$/.test(trimmed)
+    );
+  };
+
+  while (i < markdownLines.length) {
+    if (!markdownLines[i].trim().startsWith('```mermaid')) {
+      i += 1;
+      continue;
+    }
+
+    i += 1;
+    const chartLines: string[] = [];
+    let blankRun = 0;
+
+    while (i < markdownLines.length) {
+      const line = markdownLines[i];
+      const trimmed = line.trim();
+
+      if (trimmed === '```') {
+        i += 1;
+        break;
+      }
+
+      if (trimmed.length === 0) {
+        blankRun += 1;
+        chartLines.push(line);
+        i += 1;
+        continue;
+      }
+
+      if (blankRun > 0 && looksLikeMarkdownBoundary(line)) {
+        break;
+      }
+
+      blankRun = 0;
+      chartLines.push(line);
+      i += 1;
+    }
+
+    const chart = chartLines.join('\n').trim();
+    if (!chart) {
+      continue;
+    }
     let title = `Diagram ${index++}`;
     const lines = chart.split('\n');
     for (const line of lines) {
@@ -28,7 +116,11 @@ const extractMermaidCharts = (md: string): DiagramEntry[] => {
         break;
       }
     }
-    results.push({ title, chart });
+    const firstMeaningfulLine = lines.find((line) => line.trim().length > 0)?.trim() || '';
+    const startsLikeMermaid = /^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram-v2|erDiagram|journey|gantt|pie|mindmap|timeline|gitGraph)\b/.test(firstMeaningfulLine);
+    if (startsLikeMermaid) {
+      results.push({ title, chart });
+    }
   }
   return results;
 };
@@ -277,8 +369,29 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
       }
     } catch (err: any) {
       console.error('Mermaid render error:', err, '\nChart:\n', currentDiagram.chart);
+      const repairedChart = repairMermaidChart(currentDiagram.chart);
       const badElement = document.getElementById(uniqueId);
       if (badElement) badElement.remove();
+
+      if (repairedChart !== currentDiagram.chart) {
+        try {
+          const repairedId = `${uniqueId}-repaired`;
+          const { svg } = await m.render(repairedId, repairedChart);
+          if (containerRef.current) {
+            containerRef.current.innerHTML = svg;
+            const svgElement = containerRef.current.querySelector('svg');
+            if (svgElement) {
+              svgElement.setAttribute('style', 'max-width: 100%; height: auto; display: block; margin: auto;');
+            }
+          }
+          return;
+        } catch (repairErr: any) {
+          console.error('Mermaid repair render error:', repairErr, '\nRepaired chart:\n', repairedChart);
+          const repairedElement = document.getElementById(`${uniqueId}-repaired`);
+          if (repairedElement) repairedElement.remove();
+        }
+      }
+
       setRenderError('Failed to render diagram. The chart syntax may be invalid for this Mermaid version.');
     }
   };
