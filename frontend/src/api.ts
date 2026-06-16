@@ -79,17 +79,24 @@ export interface JobArtifactContent extends JobArtifact {
   content: string;
 }
 
+export interface OpenJobFileResponse {
+  message: string;
+  path: string;
+}
+
 declare global {
   interface Window {
     repoBlueprintDesktop?: {
       apiBaseUrl?: string;
       isDesktop?: boolean;
       platform?: string;
+      saveFile?: (options: { base64: string; defaultFileName: string }) => Promise<boolean>;
     };
+    showSaveFilePicker?: (options?: any) => Promise<any>;
   }
 }
 
-const API_BASE = window.repoBlueprintDesktop?.apiBaseUrl || '/api';
+export const API_BASE = window.repoBlueprintDesktop?.apiBaseUrl || '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
@@ -171,4 +178,8 @@ export const api = {
   getJobArtifacts: (jobId: string) => request<JobArtifact[]>(`/jobs/${jobId}/artifacts`),
   getJobArtifactContent: (jobId: string, path: string) =>
     request<JobArtifactContent>(`/jobs/${jobId}/artifacts/content?path=${encodeURIComponent(path)}`),
+  openJobFile: (jobId: string, path: string) =>
+    request<OpenJobFileResponse>(`/jobs/${jobId}/open-file?path=${encodeURIComponent(path)}`, {
+      method: 'POST',
+    }),
 };

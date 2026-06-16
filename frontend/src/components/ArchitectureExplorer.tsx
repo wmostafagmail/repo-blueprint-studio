@@ -4,6 +4,7 @@ import {
   Code2, FileText, Settings, Database, Globe, Box,
   ArrowLeft, BarChart2, Hash, HardDrive, Layers
 } from 'lucide-react';
+import { api } from '../api';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ interface TreeNode {
 }
 
 interface ArchitectureExplorerProps {
+  jobId: string;
   inventory: {
     repo_name?: string;
     files: InventoryFile[];
@@ -247,32 +249,46 @@ const NodeCard: React.FC<NodeCardProps> = ({ node, onClick, isFile }) => {
 
 // ── File Row ─────────────────────────────────────────────────────────────────
 
-const FileRow: React.FC<{ file: InventoryFile }> = ({ file }) => {
+const FileRow: React.FC<{
+  file: InventoryFile;
+  onOpen: (file: InventoryFile) => void;
+  isOpening: boolean;
+}> = ({ file, onOpen, isOpening }) => {
   const name = file.path.split('/').pop() || file.path;
   return (
-    <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800/50 transition-colors group">
+    <button
+      type="button"
+      onClick={() => onOpen(file)}
+      disabled={isOpening}
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors group hover:bg-slate-800/50 disabled:cursor-wait disabled:opacity-60"
+      title={`Open ${file.path} in your default app`}
+    >
       <div className="p-1 rounded bg-slate-800 text-slate-500">
         <File className="h-3.5 w-3.5" />
       </div>
-      <span className="text-sm text-slate-300 truncate flex-1">{name}</span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-slate-300">{name}</div>
+        <div className="truncate text-[11px] text-slate-500">{file.path}</div>
+      </div>
       {file.extension && (
         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${getExtColor(file.extension)}`}>
           {getExtLabel(file.extension)}
         </span>
       )}
       <span className="text-[11px] text-slate-500 shrink-0 w-16 text-right">
-        {formatSize(file.size_bytes)}
+        {isOpening ? 'Opening...' : formatSize(file.size_bytes)}
       </span>
-    </div>
+    </button>
   );
 };
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export const ArchitectureExplorer: React.FC<ArchitectureExplorerProps> = ({ inventory }) => {
+export const ArchitectureExplorer: React.FC<ArchitectureExplorerProps> = ({ jobId, inventory }) => {
   const [path, setPath] = useState<string[]>([]);
   const [animDir, setAnimDir] = useState<'in' | 'out'>('in');
   const [animKey, setAnimKey] = useState(0);
+  const [openingPath, setOpeningPath] = useState<string | null>(null);
 
   const tree = useMemo(() => buildTree(inventory.files || []), [inventory.files]);
   const currentNode = useMemo(() => getNodeAtPath(tree, path), [tree, path]);
@@ -295,6 +311,17 @@ export const ArchitectureExplorer: React.FC<ArchitectureExplorerProps> = ({ inve
   const directFiles = currentNode.files
     .sort((a, b) => b.size_bytes - a.size_bytes);
 
+  const handleOpenFile = async (file: InventoryFile) => {
+    try {
+      setOpeningPath(file.path);
+      await api.openJobFile(jobId, file.path);
+    } catch (err: any) {
+      alert(err.message || 'Failed to open file');
+    } finally {
+      setOpeningPath(null);
+    }
+  };
+
   return (
     <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-2xl" style={{ height: '600px' }}>
 
@@ -305,7 +332,7 @@ export const ArchitectureExplorer: React.FC<ArchitectureExplorerProps> = ({ inve
         </div>
         <div>
           <h3 className="text-sm font-semibold text-slate-100 leading-none">Architecture Explorer</h3>
-          <p className="text-[10px] text-slate-500 mt-0.5">Click any component to explore its contents</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">Click folders to explore and click files to open them in your default app</p>
         </div>
 
         {/* Stats summary */}
@@ -408,7 +435,12 @@ export const ArchitectureExplorer: React.FC<ArchitectureExplorerProps> = ({ inve
               style={{ animation: 'fadeIn 0.25s ease-out' }}
             >
               {directFiles.map((file, i) => (
-                <FileRow key={i} file={file} />
+                <FileRow
+                  key={i}
+                  file={file}
+                  onOpen={handleOpenFile}
+                  isOpening={openingPath === file.path}
+                />
               ))}
             </div>
           </div>

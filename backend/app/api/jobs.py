@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import uuid
 from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
@@ -307,6 +309,52 @@ def resolve_workspace_artifact(job: Job, relative_path: str) -> Path:
     return candidate
 
 
+def resolve_repo_inventory_file(job: Job, relative_path: str) -> Path:
+    if not job.workspace_path:
+        raise HTTPException(status_code=404, detail="Job workspace path is not available")
+
+    workspace_path = Path(job.workspace_path).resolve()
+    normalized_relative_path = Path(unquote(relative_path))
+    if normalized_relative_path.is_absolute():
+        raise HTTPException(status_code=400, detail="File path must be relative to the analyzed repository")
+
+    candidate_roots = [workspace_path]
+    if job.repo_name:
+        candidate_roots.append((workspace_path / job.repo_name).resolve())
+
+    # Older jobs keep the cloned repository as a direct child of the workspace.
+    for child in workspace_path.iterdir():
+        if child.is_dir():
+            candidate_roots.append(child.resolve())
+
+    checked_roots = []
+    for root in candidate_roots:
+        if root in checked_roots or not root.exists() or not root.is_dir():
+            continue
+        checked_roots.append(root)
+        candidate = (root / normalized_relative_path).resolve()
+        if root != candidate and root not in candidate.parents:
+            continue
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+def open_path_in_default_app(target_path: Path) -> None:
+    if sys.platform == "darwin":
+        command = ["open", str(target_path)]
+    elif sys.platform.startswith("win"):
+        command = ["cmd", "/c", "start", "", str(target_path)]
+    else:
+        command = ["xdg-open", str(target_path)]
+
+    try:
+        subprocess.run(command, check=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to open file in the default app: {exc}") from exc
+
+
 @router.get("/jobs/{job_id}/artifacts", response_model=List[JobArtifactResponse])
 def list_job_artifacts(job_id: str, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
@@ -361,3 +409,18 @@ def get_job_artifact_content(job_id: str, path: str, db: Session = Depends(get_d
         category=build_artifact_category(relative_path),
         content=content,
     )
+
+
+@router.post("/jobs/{job_id}/open-file")
+def open_job_file(job_id: str, path: str, db: Session = Depends(get_db)):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    target_file = resolve_repo_inventory_file(job, path)
+    open_path_in_default_app(target_file)
+
+    return {
+        "message": "File opened in the default app",
+        "path": str(target_file.relative_to(Path(job.workspace_path).resolve())),
+    }

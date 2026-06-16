@@ -359,7 +359,7 @@ export const JobDetails: React.FC<JobDetailsProps> = ({ jobId, onBack, onNavigat
                 </button>
               </div>
               {archSubTab === 'explorer' && inventoryData && (
-                <ArchitectureExplorer inventory={inventoryData} />
+                <ArchitectureExplorer jobId={jobId} inventory={inventoryData} />
               )}
               {archSubTab === 'diagrams' && markdown && (
                 <MermaidRenderer markdown={markdown} inventory={inventoryData} />

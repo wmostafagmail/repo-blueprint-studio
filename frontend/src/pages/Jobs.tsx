@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Download, RefreshCw, Calendar } from 'lucide-react';
 import { api, Job } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
+import { downloadBlueprintFile } from '../utils/download';
 
 interface JobsProps {
   onNavigateToJob: (jobId: string) => void;
@@ -11,6 +12,7 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
 
   const fetchJobs = () => {
     setLoading(true);
@@ -50,6 +52,20 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
       onNavigateToJob(newJob.id);
     } catch (err: any) {
       alert(`Failed to resume: ${err.message}`);
+    }
+  };
+
+  const handleDownloadJob = async (job: Job) => {
+    if (!job.download_url || downloadingJobId) return;
+    try {
+      setDownloadingJobId(job.id);
+      await downloadBlueprintFile(job.download_url, `${job.repo_name}_REBUILD_BLUEPRINT.md`);
+    } catch (err: any) {
+      if (err?.message !== 'Save was cancelled') {
+        alert(`Failed to download blueprint: ${err.message}`);
+      }
+    } finally {
+      setDownloadingJobId(null);
     }
   };
 
@@ -207,14 +223,14 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
                       )}
 
                       {job.status === 'completed' && job.download_url && (
-                        <a
-                          href={job.download_url}
-                          download
+                        <button
+                          onClick={() => handleDownloadJob(job)}
+                          disabled={downloadingJobId === job.id}
                           className="inline-flex rounded-2xl border border-blue-200/70 bg-blue-50/90 p-2 text-xs text-blue-700 shadow-[0_10px_24px_rgba(59,130,246,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-100"
                           title="Download Markdown Blueprint"
                         >
                           <Download className="h-4 w-4" />
-                        </a>
+                        </button>
                       )}
                     </div>
                   </div>

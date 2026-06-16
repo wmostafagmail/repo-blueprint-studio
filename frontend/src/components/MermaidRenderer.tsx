@@ -258,11 +258,16 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
   const [diagrams, setDiagrams] = useState<DiagramEntry[]>([]);
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [zoom, setZoom] = useState<number>(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isReady, setIsReady] = useState<boolean>(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [source, setSource] = useState<'blueprint' | 'inventory' | 'none'>('none');
+  const [isDragging, setIsDragging] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const dragStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const dragMovedRef = useRef<boolean>(false);
 
   // Decide diagram source
   useEffect(() => {
@@ -280,6 +285,7 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
     }
     setActiveIndex(0);
     setZoom(1);
+    setPan({ x: 0, y: 0 });
     setRenderError(null);
     setIsReady(false);
   }, [markdown, inventory]);
@@ -365,6 +371,10 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
         const svgElement = containerRef.current.querySelector('svg');
         if (svgElement) {
           svgElement.setAttribute('style', 'max-width: 100%; height: auto; display: block; margin: auto;');
+          svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+          svgElement.querySelectorAll<SVGGElement>('g.node').forEach((node) => {
+            node.style.cursor = 'pointer';
+          });
         }
       }
     } catch (err: any) {
@@ -382,6 +392,10 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
             const svgElement = containerRef.current.querySelector('svg');
             if (svgElement) {
               svgElement.setAttribute('style', 'max-width: 100%; height: auto; display: block; margin: auto;');
+              svgElement.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+              svgElement.querySelectorAll<SVGGElement>('g.node').forEach((node) => {
+                node.style.cursor = 'pointer';
+              });
             }
           }
           return;
@@ -398,7 +412,108 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
 
   const handleZoomIn = () => setZoom(z => Math.min(z + 0.2, 3));
   const handleZoomOut = () => setZoom(z => Math.max(z - 0.2, 0.4));
-  const handleZoomReset = () => setZoom(1);
+  const handleZoomReset = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const zoomAroundPoint = (clientX: number, clientY: number, nextZoom: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      setZoom(nextZoom);
+      return;
+    }
+
+    const rect = viewport.getBoundingClientRect();
+    const anchorX = clientX - rect.left - rect.width / 2;
+    const anchorY = clientY - rect.top - rect.height / 2;
+    const ratio = nextZoom / zoom;
+
+    setPan((current) => ({
+      x: current.x - anchorX * (ratio - 1),
+      y: current.y - anchorY * (ratio - 1),
+    }));
+    setZoom(nextZoom);
+  };
+
+  const handleWheelZoom: React.WheelEventHandler<HTMLDivElement> = (event) => {
+    if (renderError || !isReady) return;
+    event.preventDefault();
+    const delta = event.deltaY < 0 ? 0.18 : -0.18;
+    const nextZoom = Math.max(0.4, Math.min(4, Number((zoom + delta).toFixed(2))));
+    if (nextZoom === zoom) return;
+    zoomAroundPoint(event.clientX, event.clientY, nextZoom);
+  };
+
+  const handlePointerDown: React.PointerEventHandler<HTMLDivElement> = (event) => {
+    if (renderError || !isReady) return;
+    dragStateRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: pan.x,
+      originY: pan.y,
+    };
+    dragMovedRef.current = false;
+    setIsDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove: React.PointerEventHandler<HTMLDivElement> = (event) => {
+    if (!dragStateRef.current) return;
+    const { startX, startY, originX, originY } = dragStateRef.current;
+    if (Math.abs(event.clientX - startX) > 3 || Math.abs(event.clientY - startY) > 3) {
+      dragMovedRef.current = true;
+    }
+    setPan({
+      x: originX + (event.clientX - startX),
+      y: originY + (event.clientY - startY),
+    });
+  };
+
+  const handlePointerUp: React.PointerEventHandler<HTMLDivElement> = (event) => {
+    dragStateRef.current = null;
+    setIsDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const focusNode = (nodeElement: SVGGElement) => {
+    const viewport = viewportRef.current;
+    const svg = containerRef.current?.querySelector('svg');
+    if (!viewport || !svg) return;
+
+    const bbox = nodeElement.getBBox();
+    const svgRect = svg.getBoundingClientRect();
+    const baseScaleX = svgRect.width / svg.viewBox.baseVal.width || 1;
+    const nodeWidth = bbox.width * baseScaleX;
+    const viewportWidth = viewport.clientWidth;
+    const viewportHeight = viewport.clientHeight;
+
+    const targetZoom = Math.max(zoom, Math.min(4, Math.max(1.8, (viewportWidth * 0.42) / Math.max(nodeWidth, 1))));
+    const ratioX = viewportWidth / svg.viewBox.baseVal.width || 1;
+    const ratioY = viewportHeight / svg.viewBox.baseVal.height || 1;
+    const nodeCenterX = (bbox.x + bbox.width / 2) * ratioX;
+    const nodeCenterY = (bbox.y + bbox.height / 2) * ratioY;
+
+    setZoom(targetZoom);
+    setPan({
+      x: viewportWidth / 2 - nodeCenterX * targetZoom,
+      y: viewportHeight / 2 - nodeCenterY * targetZoom,
+    });
+  };
+
+  const handleViewerClick: React.MouseEventHandler<HTMLDivElement> = (event) => {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false;
+      return;
+    }
+    const target = event.target as Element | null;
+    const node = target?.closest?.('g.node') as SVGGElement | null;
+    if (node) {
+      focusNode(node);
+    }
+  };
 
   if (diagrams.length === 0) {
     return (
@@ -435,7 +550,7 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
           {diagrams.length > 1 && (
             <select
               value={activeIndex}
-              onChange={(e) => { setActiveIndex(Number(e.target.value)); setZoom(1); }}
+              onChange={(e) => { setActiveIndex(Number(e.target.value)); setZoom(1); setPan({ x: 0, y: 0 }); }}
               className="bg-slate-800 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700 focus:outline-none focus:border-indigo-500 max-w-[220px]"
             >
               {diagrams.map((d, idx) => (
@@ -483,7 +598,16 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
       </div>
 
       {/* Render Area */}
-      <div className="flex-1 overflow-auto relative p-6 bg-slate-950 flex items-center justify-center cursor-grab active:cursor-grabbing">
+      <div
+        ref={viewportRef}
+        onWheel={handleWheelZoom}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onClick={handleViewerClick}
+        className={`flex-1 overflow-hidden relative p-6 bg-slate-950 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      >
         {renderError ? (
           <div className="flex flex-col items-center max-w-md text-center p-6 bg-rose-950/20 border border-rose-900/40 rounded-xl space-y-3">
             <AlertTriangle className="h-8 w-8 text-rose-500" />
@@ -491,26 +615,33 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
             <p className="text-slate-400 text-xs leading-relaxed">{renderError}</p>
           </div>
         ) : !isReady ? (
-          <div className="flex items-center space-x-3 text-slate-400 text-sm">
+          <div className="flex h-full items-center justify-center space-x-3 text-slate-400 text-sm">
             <RefreshCw className="h-5 w-5 animate-spin text-indigo-500" />
             <span>Compiling diagram…</span>
           </div>
         ) : (
           <div
-            ref={containerRef}
+            className="flex h-full w-full items-center justify-center overflow-hidden"
             style={{
-              transform: `scale(${zoom})`,
-              transformOrigin: 'center center',
-              transition: 'transform 0.15s ease-out'
+              touchAction: 'none',
             }}
-            className="w-full h-full flex items-center justify-center"
-          />
+          >
+            <div
+              ref={containerRef}
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                transformOrigin: 'center center',
+                transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+              }}
+              className="flex max-h-full max-w-full items-center justify-center"
+            />
+          </div>
         )}
 
         {!renderError && isReady && (
           <div className="absolute bottom-4 right-4 bg-slate-900/80 border border-slate-800/80 rounded-full px-3 py-1 flex items-center space-x-1.5 pointer-events-none backdrop-blur-sm select-none">
             <Move className="h-3.5 w-3.5 text-slate-500" />
-            <span className="text-[10px] font-semibold text-slate-400">Scroll to zoom · Drag to pan</span>
+            <span className="text-[10px] font-semibold text-slate-400">Click blocks to focus · Scroll to zoom · Drag to pan</span>
           </div>
         )}
       </div>

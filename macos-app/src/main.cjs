@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -13,6 +13,21 @@ const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const FRONTEND_DEV_URL = process.env.REPO_BLUEPRINT_DESKTOP_URL || "http://127.0.0.1:3000/";
 
 let backendProcess = null;
+
+ipcMain.handle("desktop:save-file", async (_event, { base64, defaultFileName }) => {
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: defaultFileName,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+
+  if (canceled || !filePath) {
+    return false;
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  fs.writeFileSync(filePath, buffer);
+  return true;
+});
 
 function isBackendReachable() {
   return new Promise((resolve) => {

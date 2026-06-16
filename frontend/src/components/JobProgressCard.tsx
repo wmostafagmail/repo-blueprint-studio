@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Download, FileText, Check, Copy, AlertCircle, X, RefreshCw } from 'lucide-react';
 import { Job } from '../api';
 import { StatusBadge } from './StatusBadge';
+import { downloadBlueprintFile } from '../utils/download';
 
 interface JobProgressCardProps {
   job: Job;
@@ -13,12 +14,28 @@ interface JobProgressCardProps {
 
 export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel, onPreview, onRetry, onResume }) => {
   const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const handleCopyPath = () => {
     if (job.output_path) {
       navigator.clipboard.writeText(job.output_path);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!job.download_url || downloading) return;
+
+    try {
+      setDownloading(true);
+      await downloadBlueprintFile(job.download_url, `${job.repo_name}_REBUILD_BLUEPRINT.md`);
+    } catch (error: any) {
+      if (error?.message !== 'Save was cancelled') {
+        alert(`Failed to download blueprint: ${error.message}`);
+      }
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -89,14 +106,14 @@ export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel,
       {/* Complete Actions */}
       {job.status === 'completed' && (
         <div className="flex flex-wrap items-center gap-3 pt-2">
-          <a
-            href={job.download_url}
-            download
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
             className="primary-button px-4 py-2 text-xs"
           >
             <Download className="h-3.5 w-3.5" />
-            <span>Download Blueprint</span>
-          </a>
+            <span>{downloading ? 'Downloading…' : 'Download Blueprint'}</span>
+          </button>
 
           <button
             onClick={onPreview}
