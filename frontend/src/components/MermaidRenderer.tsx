@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, Move, AlertTriangle, RefreshCw } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Minimize2, Move, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface MermaidRendererProps {
   markdown: string;
@@ -263,6 +263,7 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
   const [renderError, setRenderError] = useState<string | null>(null);
   const [source, setSource] = useState<'blueprint' | 'inventory' | 'none'>('none');
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -351,6 +352,19 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
     if (!isReady || diagrams.length === 0) return;
     renderChart();
   }, [isReady, activeIndex, diagrams]);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsExpanded(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isExpanded]);
 
   const renderChart = async () => {
     if (diagrams.length === 0 || !containerRef.current) return;
@@ -528,11 +542,26 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
   }
 
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden flex flex-col h-[600px] shadow-2xl relative">
+    <>
+      {isExpanded && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-950/75 backdrop-blur-sm"
+          onClick={() => setIsExpanded(false)}
+        />
+      )}
+      <div
+        className={`bg-slate-950 border border-slate-800 overflow-hidden flex flex-col shadow-2xl relative ${
+          isExpanded
+            ? 'fixed left-1/2 top-1/2 z-50 h-[calc(100vh-1.5rem)] w-[calc(100vw-1.5rem)] -translate-x-1/2 -translate-y-1/2 rounded-3xl sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] lg:h-[calc(100vh-2.5rem)] lg:w-[calc(100vw-3rem)]'
+            : 'h-[600px] rounded-2xl'
+        }`}
+      >
       {/* Header */}
       <div className="bg-slate-900 border-b border-slate-800 px-5 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
         <div className="flex items-center space-x-3">
-          <Maximize2 className="h-4 w-4 text-indigo-400 shrink-0" />
+          <div className="flex items-center justify-center rounded-lg bg-indigo-500/10 p-1.5">
+            <Maximize2 className="h-4 w-4 text-indigo-400 shrink-0" />
+          </div>
           <div>
             <h3 className="text-slate-200 font-semibold text-sm leading-none">
               Architecture Viewer
@@ -588,6 +617,14 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
               Reset
             </button>
           </div>
+          <button
+            onClick={() => setIsExpanded((current) => !current)}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:border-indigo-500 hover:text-white"
+            title={isExpanded ? 'Exit expanded view' : 'Expand viewer'}
+          >
+            {isExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            <span>{isExpanded ? 'Collapse' : 'Maximize'}</span>
+          </button>
         </div>
       </div>
 
@@ -645,6 +682,7 @@ export const MermaidRenderer: React.FC<MermaidRendererProps> = ({ markdown, inve
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 };
