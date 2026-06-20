@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Download, FileText, Check, Copy, AlertCircle, X, RefreshCw } from 'lucide-react';
+import { Download, FileText, Check, Copy, AlertCircle, X, RefreshCw, Timer } from 'lucide-react';
 import { Job } from '../api';
 import { StatusBadge } from './StatusBadge';
 import { downloadBlueprintFile } from '../utils/download';
+import { formatJobDuration, getJobDurationSeconds, useJobTimer } from '../utils/jobDuration';
 
 interface JobProgressCardProps {
   job: Job;
@@ -15,6 +16,10 @@ interface JobProgressCardProps {
 export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel, onPreview, onRetry, onResume }) => {
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const isPending = job.status === 'queued' || job.status === 'running';
+  const nowMs = useJobTimer(isPending);
+  const durationSeconds = getJobDurationSeconds(job, nowMs);
+  const durationLabel = formatJobDuration(durationSeconds, isPending);
 
   const handleCopyPath = () => {
     if (job.output_path) {
@@ -39,8 +44,6 @@ export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel,
     }
   };
 
-  const isPending = job.status === 'queued' || job.status === 'running';
-
   return (
     <div className="section-card">
       {/* Header */}
@@ -58,6 +61,10 @@ export const JobProgressCard: React.FC<JobProgressCardProps> = ({ job, onCancel,
               <span>Model: <span className="rounded-full bg-blue-50 px-2 py-0.5 font-mono text-blue-700">{job.model}</span></span>
             </p>
           )}
+          <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-slate-100/80 px-3 py-1 text-[11px] font-semibold text-slate-600">
+            <Timer className="h-3.5 w-3.5 text-slate-500" />
+            <span>{isPending ? 'Elapsed' : 'Duration'}: {durationLabel}</span>
+          </p>
         </div>
 
         {isPending && (

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 import { api, ModelLimit, Setting, TestConnectionResponse } from '../api';
 
-const isLocalProvider = (provider: string): boolean => provider === 'ollama' || provider === 'lmstudio';
+const isLocalProvider = (provider: string): boolean =>
+  provider === 'ollama' || provider === 'lmstudio' || provider === 'mtplx';
 
 const normalizeModelKey = (modelName: string): string => modelName.trim().toLowerCase();
 const DIRECT_MODE_MIN_OUTPUT_TOKENS = 6000;
@@ -225,6 +226,7 @@ export const SettingsForm: React.FC = () => {
       if (value === 'ollama') updatedSettings.base_url = 'http://localhost:11434';
       else if (value === 'lmstudio') updatedSettings.base_url = 'http://localhost:1234/v1';
       else if (value === 'openrouter') updatedSettings.base_url = 'https://openrouter.ai/api/v1';
+      else if (value === 'mtplx') updatedSettings.base_url = 'http://127.0.0.1:8000/v1';
       else if (value === 'openai') updatedSettings.base_url = '';
       
       const existingKey = (updatedSettings.api_keys || {})[value] || '';
@@ -324,6 +326,7 @@ export const SettingsForm: React.FC = () => {
               <option value="openai">OpenAI / GPT</option>
               <option value="gemini">Google Gemini</option>
               <option value="openrouter">OpenRouter</option>
+              <option value="mtplx">MTPLX</option>
               <option value="ollama">Ollama Local</option>
               <option value="lmstudio">LM Studio Local</option>
               <option value="openai_compatible">Generic OpenAI-Compatible Gateway</option>
@@ -413,7 +416,13 @@ export const SettingsForm: React.FC = () => {
                 name="api_key"
                 value={settings.api_key}
                 onChange={handleChange}
-                placeholder={settings.provider === 'lmstudio' ? 'Optional (default is lm-studio)' : 'Enter your provider API Key'}
+                placeholder={
+                  settings.provider === 'lmstudio'
+                    ? 'Optional (default is lm-studio)'
+                    : settings.provider === 'mtplx'
+                    ? 'Optional for local MTPLX'
+                    : 'Enter your provider API Key'
+                }
                 className="input-surface"
               />
             </div>
@@ -431,6 +440,7 @@ export const SettingsForm: React.FC = () => {
                   settings.provider === 'ollama' ? 'http://localhost:11434' :
                   settings.provider === 'lmstudio' ? 'http://localhost:1234/v1' :
                   settings.provider === 'openrouter' ? 'https://openrouter.ai/api/v1' :
+                  settings.provider === 'mtplx' ? 'http://127.0.0.1:8000/v1' :
                   settings.provider === 'openai' ? 'https://api.openai.com/v1 (Optional)' :
                   'https://api.your-endpoint.com/v1'
                 }

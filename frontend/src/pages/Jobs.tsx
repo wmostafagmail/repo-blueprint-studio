@@ -3,6 +3,7 @@ import { Download, RefreshCw, Calendar } from 'lucide-react';
 import { api, Job } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { downloadBlueprintFile } from '../utils/download';
+import { formatJobDuration, getJobDurationSeconds, useJobTimer } from '../utils/jobDuration';
 
 interface JobsProps {
   onNavigateToJob: (jobId: string) => void;
@@ -13,6 +14,7 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+  const nowMs = useJobTimer(jobs.some((job) => job.status === 'queued' || job.status === 'running'));
 
   const fetchJobs = () => {
     setLoading(true);
@@ -137,16 +139,8 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
         <div className="space-y-4">
             {jobs.map((job) => {
               const createdDate = new Date(job.created_at).toLocaleString();
-
-              let durationStr = '--';
-              if (job.started_at && job.completed_at) {
-                const diff = new Date(job.completed_at).getTime() - new Date(job.started_at).getTime();
-                const seconds = Math.floor(diff / 1000);
-                const minutes = Math.floor(seconds / 60);
-                durationStr = minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
-              } else if (job.status === 'running') {
-                durationStr = 'running';
-              }
+              const isActive = job.status === 'queued' || job.status === 'running';
+              const durationStr = formatJobDuration(getJobDurationSeconds(job, nowMs), isActive);
 
               return (
                 <div
@@ -182,7 +176,7 @@ export const Jobs: React.FC<JobsProps> = ({ onNavigateToJob }) => {
                           <Calendar className="h-3.5 w-3.5 shrink-0 text-slate-500" />
                           <span className="truncate">Started: {createdDate}</span>
                         </div>
-                        <div className="font-mono">Duration: {durationStr}</div>
+                        <div className="font-mono">{isActive ? 'Elapsed' : 'Duration'}: {durationStr}</div>
                         <div className="font-mono truncate">Job ID: {job.id}</div>
                       </div>
 

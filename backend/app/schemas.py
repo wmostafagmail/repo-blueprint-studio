@@ -88,6 +88,7 @@ class JobResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
     download_url: Optional[str] = None
 
     class Config:

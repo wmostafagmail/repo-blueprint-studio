@@ -35,6 +35,7 @@ export interface Job {
   created_at: string;
   started_at?: string;
   completed_at?: string;
+  duration_seconds?: number;
   download_url?: string;
 }
 

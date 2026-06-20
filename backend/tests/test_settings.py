@@ -89,6 +89,30 @@ def test_get_models_ollama_returns_limit_metadata(client):
         assert data["limits"]["gemma4:latest"]["notes"] == "Discovered from Ollama model metadata."
         assert data["limits"]["gemma4:latest"]["max_output_tokens"] == 16384
 
+
+def test_get_models_mtplx_uses_health_fallback(client):
+    from unittest.mock import patch
+    import httpx
+
+    def fake_get(url, *args, **kwargs):
+        if url.endswith("/v1/models"):
+            return httpx.Response(404, text="Not Found")
+        if url.endswith("/health"):
+            return httpx.Response(200, json={
+                "ok": True,
+                "model": "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality",
+                "context_window": 262144,
+            })
+        raise AssertionError(f"Unexpected URL {url}")
+
+    with patch("httpx.get", side_effect=fake_get):
+        res = client.get("/api/settings/models?provider=mtplx&base_url=http://127.0.0.1:8000/v1")
+        assert res.status_code == 200
+        data = res.json()
+        assert "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality" in data["models"]
+        assert data["limits"]["Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality"]["source"] == "detected"
+        assert data["limits"]["Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality"]["chunk_size"] == 1000000
+
 def test_api_keys_persistence(client, db_session):
     payload = {
         "provider": "openai",

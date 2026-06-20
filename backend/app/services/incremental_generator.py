@@ -77,6 +77,7 @@ class IncrementalSpecGenerator:
         raise ValueError("No valid JSON object found in model response")
 
     def _repair_analysis_state_response(self, raw_response: str) -> Dict:
+        self.provider.raise_if_cancelled()
         repair_prompt = (
             "The previous response was intended to be valid JSON but was malformed.\n\n"
             "Return only valid JSON matching the required analysis-state schema.\n"
@@ -138,6 +139,7 @@ class IncrementalSpecGenerator:
             component_specs=component_specs,
         )
         try:
+            self.provider.raise_if_cancelled()
             resp = self.provider.generate(
                 prompt=prompt,
                 system_prompt=ANALYSIS_STATE_SYSTEM_PROMPT,
@@ -201,6 +203,7 @@ class IncrementalSpecGenerator:
         return "\n".join(sections)
 
     def generate_rolling_state_summary(self, previous_output: str, current_state: str) -> str:
+        self.provider.raise_if_cancelled()
         prompt = build_rolling_state_prompt(previous_output, current_state)
         try:
             resp = self.provider.generate(
@@ -268,6 +271,7 @@ class IncrementalSpecGenerator:
                 chunk_prompt=str(chunk["prompt"]),
                 file_tree=file_tree,
             )
+            self.provider.raise_if_cancelled()
             resp = self.provider.generate(
                 prompt=prompt,
                 system_prompt=MASTER_SYSTEM_PROMPT,
@@ -292,6 +296,7 @@ class IncrementalSpecGenerator:
                 )
                 self.section_status(section_id, 70, f"Repairing {chunk_range}", "running")
                 repair_prompt = build_repair_prompt(chunk_range, section_output, issues)
+                self.provider.raise_if_cancelled()
                 repaired = self.provider.generate(
                     prompt=repair_prompt,
                     system_prompt=MASTER_SYSTEM_PROMPT,

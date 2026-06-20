@@ -3,6 +3,8 @@ from backend.app.services.providers.openai_provider import OpenAIProvider
 from backend.app.services.providers.openrouter_provider import OpenRouterProvider
 from backend.app.services.providers.gemini_provider import GeminiProvider
 from backend.app.services.providers.lmstudio_provider import LMStudioProvider
+from backend.app.services.providers.mtplx_provider import MTPLXProvider
+from backend.app.services.providers.base import GenerationCancelledError
 from backend.app.services.providers.mock_provider import MockProvider
 
 def test_provider_factory_mapping():
@@ -25,6 +27,9 @@ def test_provider_factory_mapping():
 
     provider = get_provider("lmstudio", base_url="http://localhost:1234/v1")
     assert isinstance(provider, LMStudioProvider)
+
+    provider = get_provider("mtplx", base_url="http://127.0.0.1:8000/v1")
+    assert isinstance(provider, MTPLXProvider)
 
 def test_openrouter_headers():
     provider = get_provider("openrouter", api_key="test-key-or")
@@ -133,3 +138,95 @@ def test_lmstudio_provider_limits_fallback():
     assert limits["chunk_size"] == 40000
     assert limits["max_output_tokens"] == 6144
     assert limits["source"] == "fallback"
+
+
+def test_mtplx_provider_uses_health_for_validation_and_models():
+    from unittest.mock import patch
+    import httpx
+
+    provider = get_provider("mtplx", base_url="http://127.0.0.1:8000/v1", model="Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality")
+
+    with patch("httpx.get") as mock_get:
+        mock_get.return_value = httpx.Response(200, json={
+            "ok": True,
+            "model": "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality",
+            "context_window": 262144,
+        })
+
+        assert provider.validate_settings() is True
+        models = provider.list_models()
+        assert "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality" in models
+        assert "Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality" in models
+
+        provider.verify_selected_model()
+        assert provider.model == "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality"
+
+
+def test_mtplx_provider_generation_uses_dual_auth_headers_and_alias_matching():
+    from unittest.mock import patch
+    import httpx
+
+    provider = get_provider(
+        "mtplx",
+        api_key="mtplx-local",
+        base_url="http://127.0.0.1:8000/v1",
+        model="Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality",
+    )
+
+    with patch("httpx.get") as mock_get, patch("httpx.Client.post") as mock_post:
+        mock_get.return_value = httpx.Response(200, json={
+            "ok": True,
+            "model": "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality",
+            "context_window": 262144,
+        })
+        mock_post.return_value = httpx.Response(200, json={
+            "model": "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality",
+            "choices": [{"message": {"content": "MTPLX ready"}}],
+        })
+
+        provider.verify_selected_model()
+        output = provider.generate(prompt="Hello", system_prompt="You are brief.", max_tokens=32)
+        assert output == "MTPLX ready"
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"]["Authorization"] == "Bearer mtplx-local"
+        assert kwargs["headers"]["X-API-Key"] == "mtplx-local"
+        assert kwargs["json"]["model"] == "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality"
+        assert kwargs["json"]["max_tokens"] == 32
+        assert kwargs["json"]["max_completion_tokens"] == 32
+
+
+def test_mtplx_provider_generation_aborts_when_cancelled():
+    from unittest.mock import patch
+    import time
+    import httpx
+
+    provider = get_provider(
+        "mtplx",
+        api_key="mtplx-local",
+        base_url="http://127.0.0.1:8000/v1",
+        model="Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality",
+    )
+
+    state = {"cancelled": False}
+
+    def cancel_checker():
+        if state["cancelled"]:
+            raise Exception("Job was cancelled by the user")
+
+    def slow_post(*args, **kwargs):
+        time.sleep(1.0)
+        return httpx.Response(200, json={
+            "model": "Youssofal--Qwen3.6-27B-MTPLX-Optimized-Quality",
+            "choices": [{"message": {"content": "too late"}}],
+        })
+
+    provider.bind_cancel_checker(cancel_checker)
+
+    with patch("httpx.Client.post", side_effect=slow_post):
+        state["cancelled"] = True
+        try:
+            provider.generate(prompt="Hello", system_prompt="You are brief.", max_tokens=32, timeout_seconds=2.0)
+            assert False, "Expected GenerationCancelledError"
+        except GenerationCancelledError:
+            assert True

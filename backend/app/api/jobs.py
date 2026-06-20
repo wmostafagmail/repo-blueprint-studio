@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.responses import FileResponse
@@ -16,6 +17,34 @@ from app.utils.repo_name import repo_name_from_url
 from app.services.analysis_service import AnalysisService
 
 router = APIRouter()
+
+
+def _ensure_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _compute_duration_seconds(job: Job) -> int | None:
+    started_at = _ensure_utc(job.started_at)
+    if not started_at:
+        return None
+
+    end_time = _ensure_utc(job.completed_at) or datetime.now(timezone.utc)
+    duration = end_time - started_at
+    return max(0, int(duration.total_seconds()))
+
+
+def _build_job_response(job: Job) -> JobResponse:
+    response = JobResponse.model_validate(job)
+    response.created_at = _ensure_utc(response.created_at)
+    response.started_at = _ensure_utc(response.started_at)
+    response.completed_at = _ensure_utc(response.completed_at)
+    response.download_url = f"/api/jobs/{job.id}/download"
+    response.duration_seconds = _compute_duration_seconds(job)
+    return response
 
 def run_analysis_task(
     job_id: str, 
@@ -99,19 +128,12 @@ def create_job(payload: JobCreate, background_tasks: BackgroundTasks, db: Sessio
         resume_from_stage=payload.resume_from_stage,
     )
 
-    response = JobResponse.model_validate(new_job)
-    response.download_url = f"/api/jobs/{job_id}/download"
-    return response
+    return _build_job_response(new_job)
 
 @router.get("/jobs", response_model=List[JobResponse])
 def get_jobs(db: Session = Depends(get_db)):
     jobs = db.query(Job).filter(Job.parent_job_id.is_(None)).order_by(Job.created_at.desc()).all()
-    response_list = []
-    for job in jobs:
-        resp = JobResponse.model_validate(job)
-        resp.download_url = f"/api/jobs/{job.id}/download"
-        response_list.append(resp)
-    return response_list
+    return [_build_job_response(job) for job in jobs]
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job_status(job_id: str, db: Session = Depends(get_db)):
@@ -119,9 +141,7 @@ def get_job_status(job_id: str, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
         
-    resp = JobResponse.model_validate(job)
-    resp.download_url = f"/api/jobs/{job_id}/download"
-    return resp
+    return _build_job_response(job)
 
 @router.get("/jobs/{job_id}/logs", response_model=List[JobLogResponse])
 def get_job_logs(job_id: str, db: Session = Depends(get_db)):
@@ -145,12 +165,7 @@ def get_job_children(job_id: str, db: Session = Depends(get_db)):
         .order_by(Job.sort_index.asc(), Job.created_at.asc())
         .all()
     )
-    response_list = []
-    for child in children:
-        resp = JobResponse.model_validate(child)
-        resp.download_url = f"/api/jobs/{child.id}/download"
-        response_list.append(resp)
-    return response_list
+    return [_build_job_response(child) for child in children]
 
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, db: Session = Depends(get_db)):

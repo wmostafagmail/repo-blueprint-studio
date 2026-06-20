@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
+import threading
+import time
 from time import perf_counter
-from typing import List
+from typing import Callable, List, Optional
 
 from app.services.providers.provider_limits import (
     DEFAULT_CHUNK_SIZE,
@@ -8,6 +10,10 @@ from app.services.providers.provider_limits import (
     build_limits_payload,
     infer_local_model_profile,
 )
+
+
+class GenerationCancelledError(RuntimeError):
+    pass
 
 class BaseLLMProvider(ABC):
     """
@@ -80,6 +86,72 @@ class BaseLLMProvider(ABC):
             "response_preview": response_text.strip()[:160],
             "latency_ms": latency_ms,
         }
+
+    def bind_cancel_checker(self, cancel_checker: Optional[Callable[[], None]]) -> None:
+        self._cancel_checker = cancel_checker
+
+    def is_cancel_requested(self) -> bool:
+        cancel_checker = getattr(self, "_cancel_checker", None)
+        if not cancel_checker:
+            return False
+        try:
+            cancel_checker()
+            return False
+        except Exception as exc:
+            if "cancelled by the user" in str(exc).lower():
+                return True
+            raise
+
+    def raise_if_cancelled(self) -> None:
+        if self.is_cancel_requested():
+            raise GenerationCancelledError("Job was cancelled by the user")
+
+    def sleep_with_cancellation(self, seconds: float, poll_interval: float = 0.25) -> None:
+        deadline = time.monotonic() + max(0.0, seconds)
+        while True:
+            self.raise_if_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(poll_interval, remaining))
+
+    def run_cancellable_call(
+        self,
+        operation: Callable[[], object],
+        *,
+        timeout_seconds: float,
+        on_abort: Optional[Callable[[], None]] = None,
+        poll_interval: float = 0.5,
+    ):
+        outcome = {"value": None, "error": None}
+        done = threading.Event()
+
+        def target():
+            try:
+                outcome["value"] = operation()
+            except BaseException as exc:  # noqa: BLE001
+                outcome["error"] = exc
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=target, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+
+        while not done.wait(timeout=min(poll_interval, max(0.0, deadline - time.monotonic()) or poll_interval)):
+            if self.is_cancel_requested():
+                if on_abort:
+                    on_abort()
+                raise GenerationCancelledError("Job was cancelled by the user")
+            if time.monotonic() >= deadline:
+                if on_abort:
+                    on_abort()
+                raise TimeoutError(f"Operation timed out after {timeout_seconds} seconds")
+
+        self.raise_if_cancelled()
+        if outcome["error"] is not None:
+            raise outcome["error"]
+        return outcome["value"]
 
     def get_model_limits(self, model_name: str) -> dict:
         """

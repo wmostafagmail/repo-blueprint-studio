@@ -562,6 +562,7 @@ class AnalysisService:
             self.ensure_child_job("compile", "Compile Final Blueprint", repo_url, repo_name, provider_name, model_name, job_kind="compile", sort_index=90)
 
             provider = get_provider(provider_name, api_key, base_url, model_name)
+            provider.bind_cancel_checker(self.check_cancelled)
             provider.verify_selected_model()
             self.log_stage(
                 "provider",

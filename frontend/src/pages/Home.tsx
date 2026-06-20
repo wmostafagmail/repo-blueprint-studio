@@ -3,6 +3,7 @@ import { Play, ShieldAlert, History, Key, RefreshCw, Sparkles, Lock, Cpu } from 
 import { api, Job } from '../api';
 import { StatusBadge } from '../components/StatusBadge';
 import { ErrorPanel } from '../components/ErrorPanel';
+import { formatJobDuration, getJobDurationSeconds, useJobTimer } from '../utils/jobDuration';
 
 interface HomeProps {
   onNavigateToJob: (jobId: string) => void;
@@ -16,6 +17,7 @@ export const Home: React.FC<HomeProps> = ({ onNavigateToJob, onNavigateToHistory
   const [error, setError] = useState<string | null>(null);
   const [recentJobs, setRecentJobs] = useState<Job[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(true);
+  const nowMs = useJobTimer(recentJobs.some((job) => job.status === 'queued' || job.status === 'running'));
 
   // Fetch recent jobs
   useEffect(() => {
@@ -207,6 +209,12 @@ export const Home: React.FC<HomeProps> = ({ onNavigateToJob, onNavigateToHistory
                   <div className="min-w-0">
                     <h4 className="text-sm font-bold text-slate-800">{job.repo_name}</h4>
                     <p className="mt-1 truncate font-mono text-xs text-slate-500">{job.repo_url}</p>
+                    <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                      {job.status === 'queued' || job.status === 'running' ? 'Elapsed' : 'Duration'}:{' '}
+                      <span className="font-mono text-slate-700">
+                        {formatJobDuration(getJobDurationSeconds(job, nowMs), job.status === 'queued' || job.status === 'running')}
+                      </span>
+                    </p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="hidden text-[11px] font-medium text-slate-500 sm:inline">

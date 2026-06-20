@@ -12,7 +12,7 @@ MIN_SETTINGS_CHUNK_SIZE = 4000
 MIN_RECOMMENDED_OUTPUT_TOKENS = 1024
 MIN_RECOMMENDED_CHUNK_SIZE = 8000
 
-LOCAL_PROVIDER_NAMES = {"ollama", "lmstudio"}
+LOCAL_PROVIDER_NAMES = {"ollama", "lmstudio", "mtplx"}
 
 
 def clamp_limit(value: Any, minimum: int, maximum: int) -> Optional[int]:

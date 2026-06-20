@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
+from app.services.providers.base import GenerationCancelledError
 
 from app.services.prompt_builders import (
     SUMMARY_SYSTEM_PROMPT,
@@ -85,6 +86,7 @@ class SummaryMapService:
         Summarizes a single file. If it's a critical configuration or schema,
         preserves the raw code. Otherwise, calls the LLM to get a structured summary.
         """
+        self.provider.raise_if_cancelled()
         full_path = repo_path / file_path
         
         # Guard if file doesn't exist
@@ -111,6 +113,7 @@ class SummaryMapService:
             return summary_data
 
         # Case B: LLM Summarization
+        self.provider.raise_if_cancelled()
         system_prompt = SUMMARY_SYSTEM_PROMPT
         prompt = build_file_summary_prompt(file_path, content)
 
@@ -148,6 +151,8 @@ class SummaryMapService:
                     "type": "text",
                     "content": resp.strip()
                 }
+        except GenerationCancelledError:
+            raise
         except Exception as e:
             self.log(f"LLM Summarization failed for {file_path}: {str(e)}", "WARNING")
             summary_data = {
@@ -193,6 +198,9 @@ class SummaryMapService:
                 try:
                     res = future.result()
                     results.append(res)
+                except GenerationCancelledError:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
                 except Exception as e:
                     self.log(f"Unhandled mapping thread error on {path}: {str(e)}", "ERROR")
                     results.append({"path": path, "type": "error", "content": str(e)})

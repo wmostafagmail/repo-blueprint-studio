@@ -9,6 +9,7 @@ from app.services.prompt_builders import (
     COMPONENT_SYSTEM_PROMPT,
     build_component_prompt,
 )
+from app.services.providers.base import GenerationCancelledError
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class ReduceService:
         """
         Sends the compiled summaries of a component to the LLM to create a component-level spec.
         """
+        self.provider.raise_if_cancelled()
         self.log(f"Synthesizing component spec for directory/module '{component_name}'...", "INFO")
         
         # Format file summaries for prompt
@@ -128,6 +130,8 @@ class ReduceService:
                 max_tokens=1500
             )
             spec_content = resp.strip()
+        except GenerationCancelledError:
+            raise
         except Exception as e:
             self.log(f"Synthesis failed for component {component_name}: {str(e)}", "WARNING")
             spec_content = f"Synthesis failed for component {component_name}: {str(e)}"
@@ -166,6 +170,9 @@ class ReduceService:
                 try:
                     spec = future.result()
                     synthesized_specs[comp_name] = spec
+                except GenerationCancelledError:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
                 except Exception as e:
                     self.log(f"Unhandled thread error during synthesis of {comp_name}: {str(e)}", "ERROR")
                     synthesized_specs[comp_name] = f"Synthesis error: {str(e)}"
